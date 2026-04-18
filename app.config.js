@@ -21,7 +21,11 @@ module.exports = ({ config }) => {
     (process.env.EAS_BUILD_PROFILE || "").toLowerCase() === "production" ||
     process.env.NODE_ENV === "production";
 
-  const googleMapsApiKey = (process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || "").trim();
+  const googleMapsApiKey = (
+    process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY ||
+    process.env.GOOGLE_MAPS_API_KEY ||
+    ""
+  ).trim();
   const hasValidGoogleMapsApiKey =
     googleMapsApiKey.length > 0 && googleMapsApiKey !== "SET_IN_EAS_ENV";
 
@@ -63,6 +67,10 @@ module.exports = ({ config }) => {
 
   const withMapConfig = {
     ...baseConfig,
+    extra: {
+      ...(baseConfig.extra || {}),
+      ...(hasValidGoogleMapsApiKey ? { googleMapsApiKey } : {}),
+    },
     ios: {
       ...(baseConfig.ios || {}),
       config: {
