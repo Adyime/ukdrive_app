@@ -17,6 +17,7 @@ import {
   ActivityIndicator,
   Dimensions,
   AppState,
+  Platform,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
@@ -1308,8 +1309,8 @@ export default function HomeScreen() {
         <View style={{ flex: 1, backgroundColor: "#fff" }}>
           <MapView
             ref={passengerMapRef}
-            provider={PROVIDER_GOOGLE}
-            customMapStyle={MAP_STYLE}
+            provider={Platform.OS === "android" ? PROVIDER_GOOGLE : undefined}
+            customMapStyle={Platform.OS === "android" ? undefined : MAP_STYLE}
             style={{ position: "absolute", top: 0, right: 0, bottom: 0, left: 0 }}
             initialRegion={passengerMapRegion}
             onRegionChangeComplete={handlePassengerMapRegionChangeComplete}
