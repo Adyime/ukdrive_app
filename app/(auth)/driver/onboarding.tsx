@@ -4,7 +4,7 @@
  * Progress is persisted so user can resume after refresh.
  */
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { LocalizedText as Text } from "@/components/localized-text";
 import {
   View, ScrollView, KeyboardAvoidingView, Platform, TouchableOpacity, ActivityIndicator, Keyboard } from "react-native";
@@ -15,10 +15,7 @@ import { Loading } from "@/components/ui/loading";
 import { ImagePickerComponent } from "@/components/ui/image-picker";
 import { onboardDriver, type GenderOption } from "@/lib/api/auth";
 import { uploadDocumentImage } from "@/lib/api/storage";
-import {
-  getVehicleOptions,
-  type VehiclePurpose,
-} from "@/lib/api/vehicle-options";
+import { getVehicleOptions, type VehiclePurpose } from "@/lib/api/vehicle-options";
 import { useAuth } from "@/context/auth-context";
 import {
   getDriverOnboardingContext,
@@ -27,17 +24,6 @@ import {
   clearDriverOnboardingContext,
   type DriverOnboardingDraft,
 } from "@/lib/storage";
-
-const FALLBACK_VEHICLE_TYPES = [
-  { value: "bike", label: "Bike" },
-  { value: "scooter", label: "Scooter" },
-  { value: "erickshaw", label: "E-Rickshaw" },
-  { value: "miniauto", label: "Mini Auto" },
-  { value: "auto", label: "Auto" },
-  { value: "car", label: "Car" },
-  { value: "cab", label: "Cab" },
-  { value: "motorcycle", label: "Motorcycle" },
-];
 
 const DRAFT_SAVE_DEBOUNCE_MS = 1500;
 const GENDER_OPTIONS: GenderOption[] = ["Male", "Female", "Others"];
@@ -66,8 +52,7 @@ export default function DriverOnboardingScreen() {
   const [gender, setGender] = useState<GenderOption | "">("");
   const [email, setEmail] = useState("");
 
-  // Vehicle data (legacy vehicleType or vehicleSubcategoryId from API)
-  const [vehicleType, setVehicleType] = useState("");
+  // Vehicle data
   const [vehicleSubcategoryId, setVehicleSubcategoryId] = useState<
     string | null
   >(null);
@@ -75,7 +60,8 @@ export default function DriverOnboardingScreen() {
     {
       id: string;
       label: string;
-      legacyVehicleType: string;
+      categoryName: string;
+      subcategoryName: string;
       supportedPurposes: VehiclePurpose[];
     }[]
   >([]);
@@ -83,20 +69,65 @@ export default function DriverOnboardingScreen() {
   const [driverPurpose, setDriverPurpose] = useState<VehiclePurpose>("both");
   const [vehicleRegistration, setVehicleRegistration] = useState("");
 
+  const groupedVehicleOptions = useMemo(() => {
+    const groups = new Map<
+      string,
+      {
+        id: string;
+        label: string;
+        categoryName: string;
+        subcategoryName: string;
+        supportedPurposes: VehiclePurpose[];
+      }[]
+    >();
+
+    for (const option of vehicleOptions) {
+      const key = option.categoryName.trim() || "Other";
+      const current = groups.get(key) ?? [];
+      current.push(option);
+      groups.set(key, current);
+    }
+
+    return Array.from(groups.entries())
+      .map(([categoryName, options]) => ({
+        categoryName,
+        options: [...options].sort((a, b) =>
+          a.subcategoryName.localeCompare(b.subcategoryName)
+        ),
+      }))
+      .sort((a, b) => a.categoryName.localeCompare(b.categoryName));
+  }, [vehicleOptions]);
+
+  const selectedVehicleOption = useMemo(() => {
+    return vehicleOptions.find((opt) => opt.id === vehicleSubcategoryId) ?? null;
+  }, [vehicleOptions, vehicleSubcategoryId]);
+
+  const selectedCategoryName = useMemo(() => {
+    return (
+      selectedVehicleOption?.categoryName ??
+      groupedVehicleOptions[0]?.categoryName ??
+      ""
+    );
+  }, [groupedVehicleOptions, selectedVehicleOption?.categoryName]);
+
+  const selectedCategoryOptions = useMemo(() => {
+    return (
+      groupedVehicleOptions.find(
+        (group) => group.categoryName === selectedCategoryName
+      )?.options ?? []
+    );
+  }, [groupedVehicleOptions, selectedCategoryName]);
+
   // Auto-reset driverPurpose when subcategory changes and current purpose isn't supported
   useEffect(() => {
-    const selectedOption = vehicleOptions.find((opt) =>
-      opt.id
-        ? opt.id === vehicleSubcategoryId
-        : opt.legacyVehicleType === vehicleType
-    );
+    const selectedOption = selectedVehicleOption;
     if (!selectedOption) return;
     const supported = selectedOption.supportedPurposes;
     // If current purpose is supported (or "both" is supported), do nothing
     if (supported.includes("both") || supported.includes(driverPurpose)) return;
     // Reset to the first supported purpose
     setDriverPurpose(supported[0] ?? "both");
-  }, [vehicleSubcategoryId, vehicleType, vehicleOptions]);
+  }, [driverPurpose, selectedVehicleOption]);
   const [rcNumber, setRcNumber] = useState("");
   const [vehicleOwnerName, setVehicleOwnerName] = useState("");
 
@@ -154,7 +185,6 @@ export default function DriverOnboardingScreen() {
         fullName,
         gender,
         email,
-        vehicleType,
         vehicleSubcategoryId,
         driverPurpose,
         vehicleRegistration,
@@ -179,7 +209,6 @@ export default function DriverOnboardingScreen() {
     fullName,
     gender,
     email,
-    vehicleType,
     vehicleSubcategoryId,
     driverPurpose,
     vehicleRegistration,
@@ -221,7 +250,6 @@ export default function DriverOnboardingScreen() {
       setFullName(draft.fullName ?? "");
       setGender((draft.gender as GenderOption) ?? "");
       setEmail(draft.email ?? "");
-      setVehicleType(draft.vehicleType ?? "");
       setVehicleSubcategoryId(draft.vehicleSubcategoryId);
       setDriverPurpose((draft.driverPurpose as VehiclePurpose) ?? "both");
       setVehicleRegistration(draft.vehicleRegistration ?? "");
@@ -244,7 +272,8 @@ export default function DriverOnboardingScreen() {
         const flat: {
           id: string;
           label: string;
-          legacyVehicleType: string;
+          categoryName: string;
+          subcategoryName: string;
           supportedPurposes: VehiclePurpose[];
         }[] = [];
         for (const cat of res.data.categories) {
@@ -253,7 +282,8 @@ export default function DriverOnboardingScreen() {
               id: sub.id,
               label:
                 cat.name + (sub.name !== "Standard" ? ` – ${sub.name}` : ""),
-              legacyVehicleType: sub.legacyVehicleType ?? "car",
+              categoryName: cat.name,
+              subcategoryName: sub.name,
               supportedPurposes: sub.supportedPurposes ?? ["both"],
             });
           }
@@ -261,20 +291,7 @@ export default function DriverOnboardingScreen() {
         if (flat.length > 0) {
           setVehicleOptions(flat);
           setVehicleSubcategoryId(flat[0].id);
-          setVehicleType(flat[0].legacyVehicleType);
         }
-      }
-      if (!res.success || !res.data?.categories?.length) {
-        setVehicleOptions(
-          FALLBACK_VEHICLE_TYPES.map((t) => ({
-            id: "",
-            label: t.label,
-            legacyVehicleType: t.value,
-            supportedPurposes: ["both"] as VehiclePurpose[],
-          }))
-        );
-        setVehicleType(FALLBACK_VEHICLE_TYPES[0].value);
-        setVehicleSubcategoryId(null);
       }
     });
   }, []);
@@ -288,8 +305,8 @@ export default function DriverOnboardingScreen() {
       if (!emailRegex.test(email))
         newErrors.email = "Please enter a valid email address";
     }
-    if (!vehicleType && !vehicleSubcategoryId)
-      newErrors.vehicleType = "Vehicle type is required";
+    if (!vehicleSubcategoryId)
+      newErrors.vehicleSubcategoryId = "Vehicle category and subcategory are required";
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
@@ -320,8 +337,8 @@ export default function DriverOnboardingScreen() {
       if (!emailRegex.test(email))
         newErrors.email = "Please enter a valid email address";
     }
-    if (!vehicleType && !vehicleSubcategoryId)
-      newErrors.vehicleType = "Vehicle type is required";
+    if (!vehicleSubcategoryId)
+      newErrors.vehicleSubcategoryId = "Vehicle category and subcategory are required";
     if (!vehicleRegistration.trim()) {
       newErrors.vehicleRegistration = "Vehicle registration number is required";
     } else {
@@ -387,26 +404,11 @@ export default function DriverOnboardingScreen() {
         personalDetails.email = trimmedEmail;
       }
 
-      // Resolve vehicleType for payload: backend requires at least one of vehicleType or vehicleSubcategoryId
-      let resolvedVehicleType =
-        vehicleType?.trim() ||
-        (vehicleSubcategoryId && vehicleOptions.length > 0
-          ? vehicleOptions.find((o) => o.id === vehicleSubcategoryId)
-              ?.legacyVehicleType
-          : undefined);
       const vehicleSubcategoryIdToSend = vehicleSubcategoryId?.trim() || null;
-      // If we're sending subcategory but couldn't resolve type (e.g. option not in list), send a fallback so backend has both
-      if (
-        vehicleSubcategoryIdToSend &&
-        !resolvedVehicleType &&
-        vehicleOptions.length > 0
-      ) {
-        resolvedVehicleType = vehicleOptions[0].legacyVehicleType;
-      }
-      if (!resolvedVehicleType && !vehicleSubcategoryIdToSend) {
+      if (!vehicleSubcategoryIdToSend) {
         setErrors((prev) => ({
           ...prev,
-          vehicleType: "Vehicle type is required",
+          vehicleSubcategoryId: "Vehicle category and subcategory are required",
         }));
         setLoading(false);
         return;
@@ -415,10 +417,7 @@ export default function DriverOnboardingScreen() {
       const requestData = {
         personalDetails,
         vehicleData: {
-          vehicleType: resolvedVehicleType ?? vehicleType ?? "",
-          ...(vehicleSubcategoryIdToSend
-            ? { vehicleSubcategoryId: vehicleSubcategoryIdToSend }
-            : {}),
+          vehicleSubcategoryId: vehicleSubcategoryIdToSend,
           vehicleRegistration: vehicleRegistration.trim().toUpperCase(),
           rcNumber: rcNumber.trim(),
           vehicleOwnerName: vehicleOwnerName.trim(),
@@ -700,7 +699,7 @@ export default function DriverOnboardingScreen() {
                       style={{ fontFamily: "Figtree_500Medium" }}
                       className="text-sm text-gray-700 dark:text-gray-300 mb-2"
                     >
-                      Vehicle Type
+                      Vehicle Category
                     </Text>
                     {vehicleOptionsLoading ? (
                       <Text
@@ -716,21 +715,16 @@ export default function DriverOnboardingScreen() {
                         className="mb-2"
                       >
                         <View className="flex-row">
-                          {vehicleOptions.map((opt, index) => {
-                            const isSelected = opt.id
-                              ? vehicleSubcategoryId === opt.id
-                              : vehicleType === opt.legacyVehicleType;
+                          {groupedVehicleOptions.map((group, index) => {
+                            const isSelected =
+                              selectedCategoryName === group.categoryName;
                             return (
                               <TouchableOpacity
-                                key={opt.id || opt.legacyVehicleType}
+                                key={group.categoryName}
                                 onPress={() => {
-                                  if (opt.id) {
-                                    setVehicleSubcategoryId(opt.id);
-                                    setVehicleType(opt.legacyVehicleType);
-                                  } else {
-                                    setVehicleSubcategoryId(null);
-                                    setVehicleType(opt.legacyVehicleType);
-                                  }
+                                  const firstOption = group.options[0];
+                                  if (!firstOption) return;
+                                  setVehicleSubcategoryId(firstOption.id);
                                 }}
                                 activeOpacity={0.8}
                                 style={{
@@ -754,7 +748,7 @@ export default function DriverOnboardingScreen() {
                                     color: isSelected ? "#fff" : "#374151",
                                   }}
                                 >
-                                  {opt.label}
+                                  {group.categoryName}
                                 </Text>
                               </TouchableOpacity>
                             );
@@ -762,12 +756,72 @@ export default function DriverOnboardingScreen() {
                         </View>
                       </ScrollView>
                     )}
-                    {errors.vehicleType && (
+                  </View>
+                  <View className="mb-4">
+                    <Text
+                      style={{ fontFamily: "Figtree_500Medium" }}
+                      className="text-sm text-gray-700 dark:text-gray-300 mb-2"
+                    >
+                      Vehicle Subcategory
+                    </Text>
+                    {vehicleOptionsLoading ? (
+                      <Text
+                        style={{ fontFamily: "Figtree_400Regular" }}
+                        className="text-gray-500 dark:text-gray-400 text-sm"
+                      >
+                        Loading options...
+                      </Text>
+                    ) : (
+                      <ScrollView
+                        horizontal
+                        showsHorizontalScrollIndicator={false}
+                        className="mb-2"
+                      >
+                        <View className="flex-row">
+                          {selectedCategoryOptions.map((opt, index) => {
+                            const isSelected = vehicleSubcategoryId === opt.id;
+                            return (
+                              <TouchableOpacity
+                                key={opt.id}
+                                onPress={() => {
+                                  setVehicleSubcategoryId(opt.id);
+                                }}
+                                activeOpacity={0.8}
+                                style={{
+                                  paddingVertical: 10,
+                                  paddingHorizontal: 16,
+                                  borderRadius: 8,
+                                  marginLeft: index > 0 ? 8 : 0,
+                                  backgroundColor: isSelected
+                                    ? BRAND_PURPLE
+                                    : "transparent",
+                                  borderWidth: 2,
+                                  borderColor: isSelected
+                                    ? BRAND_PURPLE
+                                    : "#D1D5DB",
+                                }}
+                              >
+                                <Text
+                                  style={{
+                                    fontFamily: "Figtree_600SemiBold",
+                                    fontSize: 14,
+                                    color: isSelected ? "#fff" : "#374151",
+                                  }}
+                                >
+                                  {opt.subcategoryName}
+                                </Text>
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </View>
+                      </ScrollView>
+                    )}
+                    {errors.vehicleSubcategoryId && (
                       <Text
                         style={{ fontFamily: "Figtree_400Regular" }}
                         className="text-sm text-red-500 mt-1"
                       >
-                        {errors.vehicleType}
+                        {errors.vehicleSubcategoryId}
                       </Text>
                     )}
                   </View>
@@ -782,15 +836,11 @@ export default function DriverOnboardingScreen() {
                       style={{ fontFamily: "Figtree_400Regular" }}
                       className="text-xs text-gray-500 dark:text-gray-400 mb-2"
                     >
-                      What type of services will you provide?
+                      What type of services will you provide with this subcategory?
                     </Text>
                     <View className="flex-row flex-wrap">
                       {(() => {
-                        const selectedOption = vehicleOptions.find((opt) =>
-                          opt.id
-                            ? opt.id === vehicleSubcategoryId
-                            : opt.legacyVehicleType === vehicleType
-                        );
+                        const selectedOption = selectedVehicleOption;
                         const supported = selectedOption?.supportedPurposes ?? [
                           "both",
                         ];

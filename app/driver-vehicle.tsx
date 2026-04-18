@@ -20,7 +20,6 @@ import {
   getVehicleOptions,
   type VehiclePurpose,
 } from "@/lib/api/vehicle-options";
-import { formatVehicleType } from "@/lib/api/ride";
 
 const BRAND_PURPLE = "#843FE3";
 
@@ -29,7 +28,6 @@ type DriverVehicleOption = {
   label: string;
   categoryName: string;
   subcategoryName: string;
-  legacyVehicleType: string | null;
   supportedPurposes: VehiclePurpose[];
 };
 
@@ -52,7 +50,6 @@ function buildSubcategoryLabel(profile: DriverProfileResponse | null): string {
 }
 
 function buildCurrentVehicleTypeLabel(profile: DriverProfileResponse | null): string {
-  if (profile?.vehicleType) return formatVehicleType(profile.vehicleType);
   const categoryName = profile?.vehicleSubcategory?.category?.name?.trim();
   if (categoryName) return categoryName;
   const subcategoryName = profile?.vehicleSubcategory?.name?.trim();
@@ -76,7 +73,6 @@ function buildRequestedSubcategoryLabel(profile: DriverProfileResponse | null): 
 
 function buildRequestedVehicleTypeLabel(profile: DriverProfileResponse | null): string {
   const pendingTarget = profile?.vehicleChangeRequest?.target;
-  if (pendingTarget?.vehicleType) return formatVehicleType(pendingTarget.vehicleType);
   const categoryName = pendingTarget?.vehicleSubcategory?.category?.name?.trim();
   if (categoryName) return categoryName;
   const subcategoryName = pendingTarget?.vehicleSubcategory?.name?.trim();
@@ -265,7 +261,6 @@ export default function DriverVehicleScreen() {
                   : ""),
               categoryName: category.name,
               subcategoryName: subcategory.name,
-              legacyVehicleType: subcategory.legacyVehicleType,
               supportedPurposes:
                 subcategory.supportedPurposes?.length > 0
                   ? subcategory.supportedPurposes
@@ -847,9 +842,7 @@ export default function DriverVehicleScreen() {
                                   marginTop: 4,
                                 }}
                               >
-                                {option.legacyVehicleType
-                                  ? formatVehicleType(option.legacyVehicleType)
-                                  : "No legacy type"}
+                                {option.categoryName} category
                               </Text>
                             </TouchableOpacity>
                           );

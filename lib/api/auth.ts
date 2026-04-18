@@ -67,8 +67,7 @@ export interface DriverOnboardingData {
     email?: string;
   };
   vehicleData: {
-    vehicleType: string;
-    vehicleSubcategoryId?: string;
+    vehicleSubcategoryId: string;
     driverPurpose?: "passenger" | "delivery" | "both";
     vehicleRegistration: string;
     rcNumber: string;
@@ -187,4 +186,3 @@ export async function requestAccountDeletion(
 
 // Note: refreshTokens has been moved to ./token-refresh.ts to avoid circular dependencies
 // Import it from there if needed: import { refreshTokens } from './token-refresh';
-

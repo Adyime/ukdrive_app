@@ -147,7 +147,6 @@ export interface CreatePorterRequest {
   packageDimensions?: string; // "LxWxH" format in cm
   packageDescription?: string;
   isFragile?: boolean;
-  vehicleType?: string;
   vehicleSubcategoryId?: string;
   paymentParty?: 'SENDER' | 'RECEIVER';
 }
@@ -177,7 +176,7 @@ export async function createPorterService(
 export async function getNearbyDriversForPorter(
   latitude: number,
   longitude: number,
-  vehicleType?: string,
+  _vehicleType?: string,
   radius?: number,
   vehicleSubcategoryId?: string
 ): Promise<{ success: boolean; data?: { drivers: NearbyDriver[] }; error?: unknown }> {
@@ -185,10 +184,6 @@ export async function getNearbyDriversForPorter(
     latitude: latitude.toString(),
     longitude: longitude.toString(),
   });
-
-  if (vehicleType) {
-    params.append('vehicleType', vehicleType);
-  }
 
   if (radius) {
     params.append('radius', radius.toString());

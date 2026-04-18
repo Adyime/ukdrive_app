@@ -168,7 +168,6 @@ export interface CreateCarPoolRequest {
   departureTime: string; // ISO datetime string
   maxPassengers: number; // 1-6
   baseFare: number; // fixed price per passenger, minimum 20
-  vehicleType?: string;
   vehicleSubcategoryId?: string;
   notes?: string;
 }

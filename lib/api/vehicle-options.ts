@@ -11,7 +11,6 @@ export interface VehicleSubcategoryOption {
   id: string;
   name: string;
   slug: string;
-  legacyVehicleType: string | null;
   displayOrder: number;
   supportedPurposes: VehiclePurpose[];
 }
