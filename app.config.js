@@ -21,9 +21,14 @@ module.exports = ({ config }) => {
     (process.env.EAS_BUILD_PROFILE || "").toLowerCase() === "production" ||
     process.env.NODE_ENV === "production";
 
-  const googleMapsApiKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || "";
-  if (isProductionBuild && !googleMapsApiKey) {
-    throw new Error("EXPO_PUBLIC_GOOGLE_MAPS_API_KEY is required for production builds.");
+  const googleMapsApiKey = (process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || "").trim();
+  const hasValidGoogleMapsApiKey =
+    googleMapsApiKey.length > 0 && googleMapsApiKey !== "SET_IN_EAS_ENV";
+
+  if (isAndroidBuild && !hasValidGoogleMapsApiKey) {
+    throw new Error(
+      "EXPO_PUBLIC_GOOGLE_MAPS_API_KEY is required for Android builds because the app uses Google Maps. Set a real API key before running expo run:android or creating an EAS Android build."
+    );
   }
 
   const allowCleartextTraffic = String(
@@ -62,14 +67,16 @@ module.exports = ({ config }) => {
       ...(baseConfig.ios || {}),
       config: {
         ...((baseConfig.ios && baseConfig.ios.config) || {}),
-        ...(googleMapsApiKey ? { googleMapsApiKey } : {}),
+        ...(hasValidGoogleMapsApiKey ? { googleMapsApiKey } : {}),
       },
     },
     android: {
       ...(baseConfig.android || {}),
       config: {
         ...((baseConfig.android && baseConfig.android.config) || {}),
-        ...(googleMapsApiKey ? { googleMaps: { apiKey: googleMapsApiKey } } : {}),
+        ...(hasValidGoogleMapsApiKey
+          ? { googleMaps: { apiKey: googleMapsApiKey } }
+          : {}),
       },
     },
   };
