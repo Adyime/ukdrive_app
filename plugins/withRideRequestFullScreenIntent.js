@@ -686,7 +686,7 @@ function withRideRequestFullScreenIntent(config) {
   return withDangerousMod(config, [
     "android",
     async (config) => {
-      const packageName = config.android?.package || "com.ukdrive.app";
+      const packageName = config.android?.package || "com.wnapp.id1755261066753";
       const packageSegments = packageName.split(".");
 
       const { platformProjectRoot } = config.modRequest;
