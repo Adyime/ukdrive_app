@@ -1322,7 +1322,7 @@ export default function HomeScreen() {
             <MapView
               ref={passengerMapRef}
               provider={Platform.OS === "android" ? PROVIDER_GOOGLE : undefined}
-              customMapStyle={Platform.OS === "android" ? undefined : MAP_STYLE}
+              customMapStyle={Platform.OS === "android" ? MAP_STYLE : undefined}
               style={{ position: "absolute", top: 0, right: 0, bottom: 0, left: 0 }}
               initialRegion={passengerMapRegion}
               onRegionChangeComplete={handlePassengerMapRegionChangeComplete}
