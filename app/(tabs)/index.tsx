@@ -17,9 +17,11 @@ import {
   ActivityIndicator,
   Dimensions,
   AppState,
+  Platform,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
+import Constants from "expo-constants";
 import { Ionicons } from "@expo/vector-icons";
 import { router, useFocusEffect } from "expo-router";
 import { OneSignal } from "react-native-onesignal";
@@ -1299,6 +1301,16 @@ export default function HomeScreen() {
       Boolean(item)
   );
   const rewardOffersPreview = driverRewards.offers.slice(0, 3);
+  const runtimeGoogleMapsApiKey = (
+    Constants.expoConfig?.extra?.googleMapsApiKey ||
+    process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY ||
+    ""
+  ).trim();
+  const hasRuntimeGoogleMapsApiKey =
+    runtimeGoogleMapsApiKey.length > 0 &&
+    runtimeGoogleMapsApiKey !== "SET_IN_EAS_ENV";
+  const canRenderAndroidMap =
+    Platform.OS !== "android" || hasRuntimeGoogleMapsApiKey;
 
   // Passenger home - map-first layout with bottom sheet search/action panel
   if (isPassenger) {
@@ -1306,29 +1318,58 @@ export default function HomeScreen() {
       <View style={{ flex: 1, backgroundColor: "#000" }}>
         <StatusBar style="dark" translucent backgroundColor="transparent" />
         <View style={{ flex: 1, backgroundColor: "#fff" }}>
-          <MapView
-            ref={passengerMapRef}
-            provider={PROVIDER_GOOGLE}
-            customMapStyle={MAP_STYLE}
-            style={{ position: "absolute", top: 0, right: 0, bottom: 0, left: 0 }}
-            initialRegion={passengerMapRegion}
-            onRegionChangeComplete={handlePassengerMapRegionChangeComplete}
-            minZoomLevel={passengerMinZoomLevel}
-            showsUserLocation={false}
-            showsCompass={false}
-            showsMyLocationButton={false}
-            rotateEnabled={false}
-            pitchEnabled={false}
-          >
-            <Marker
-              coordinate={{
-                latitude: passengerMapRegion.latitude,
-                longitude: passengerMapRegion.longitude,
+          {canRenderAndroidMap ? (
+            <MapView
+              ref={passengerMapRef}
+              provider={Platform.OS === "android" ? PROVIDER_GOOGLE : undefined}
+              customMapStyle={Platform.OS === "android" ? MAP_STYLE : undefined}
+              style={{ position: "absolute", top: 0, right: 0, bottom: 0, left: 0 }}
+              initialRegion={passengerMapRegion}
+              onRegionChangeComplete={handlePassengerMapRegionChangeComplete}
+              minZoomLevel={passengerMinZoomLevel}
+              showsUserLocation={false}
+              showsCompass={false}
+              showsMyLocationButton={false}
+              rotateEnabled={false}
+              pitchEnabled={false}
+            >
+              <Marker
+                coordinate={{
+                  latitude: passengerMapRegion.latitude,
+                  longitude: passengerMapRegion.longitude,
+                }}
+              >
+                <Ionicons name="location" size={30} color={BRAND_ORANGE} />
+              </Marker>
+            </MapView>
+          ) : (
+            <View
+              style={{
+                position: "absolute",
+                top: 0,
+                right: 0,
+                bottom: 0,
+                left: 0,
+                backgroundColor: "#F3F4F6",
+                alignItems: "center",
+                justifyContent: "center",
+                paddingHorizontal: 24,
               }}
             >
-              <Ionicons name="location" size={30} color={BRAND_ORANGE} />
-            </Marker>
-          </MapView>
+              <Ionicons name="map-outline" size={34} color="#9CA3AF" />
+              <Text
+                style={{
+                  marginTop: 10,
+                  fontFamily: "Figtree_600SemiBold",
+                  fontSize: 14,
+                  color: "#374151",
+                  textAlign: "center",
+                }}
+              >
+                Google Maps key missing. Add EXPO_PUBLIC_GOOGLE_MAPS_API_KEY and rebuild Android.
+              </Text>
+            </View>
+          )}
 
           <TouchableOpacity
             activeOpacity={0.85}

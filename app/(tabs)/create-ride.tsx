@@ -1180,8 +1180,6 @@ export default function CreateRideScreen() {
       );
     if (selectedOption?.slug)
       rideData.vehicleSubcategorySlug = String(selectedOption.slug);
-    if (selectedOption?.vehicleType)
-      rideData.vehicleType = selectedOption.vehicleType;
     return rideData;
   }, [
     pickupCoords,

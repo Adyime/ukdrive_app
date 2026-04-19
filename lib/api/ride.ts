@@ -18,7 +18,6 @@ export enum RideStatus {
   CANCELLED = 'CANCELLED',
 }
 
-/** @deprecated Legacy vehicle type — use vehicle subcategory slug/id instead. Kept as string alias for backward compat. */
 export type VehicleType = string;
 
 export interface PassengerProfile {
@@ -149,7 +148,6 @@ export interface CreateRideRequest {
   destinationLat: number;
   destinationLng: number;
   destination: string;
-  vehicleType?: VehicleType;
   vehicleSubcategoryId?: string;
   vehicleSubcategorySlug?: string;
   /** When set, request is sent directly to this driver (30s expiry). */
@@ -187,7 +185,6 @@ export async function createRide(
     destinationLng: Number(data.destinationLng),
     destination: String(data.destination ?? ''),
   };
-  if (data.vehicleType != null) body.vehicleType = String(data.vehicleType);
   if (data.vehicleSubcategoryId != null && data.vehicleSubcategoryId !== '') body.vehicleSubcategoryId = String(data.vehicleSubcategoryId);
   if (data.vehicleSubcategorySlug != null && data.vehicleSubcategorySlug !== '') body.vehicleSubcategorySlug = String(data.vehicleSubcategorySlug);
   if (data.requestedDriverId != null && data.requestedDriverId !== '') body.requestedDriverId = String(data.requestedDriverId);
@@ -231,7 +228,7 @@ export async function getRideEstimate(
 export async function getNearbyDrivers(
   latitude: number,
   longitude: number,
-  vehicleType?: VehicleType,
+  _vehicleType?: VehicleType,
   radius?: number,
   vehicleSubcategoryId?: string | null,
   publicOnly?: boolean
@@ -244,10 +241,6 @@ export async function getNearbyDrivers(
     latitude: latitude.toString(),
     longitude: longitude.toString(),
   });
-
-  if (vehicleType) {
-    params.append('vehicleType', vehicleType);
-  }
 
   if (radius) {
     params.append('radius', radius.toString());

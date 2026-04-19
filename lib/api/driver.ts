@@ -51,7 +51,6 @@ export interface DriverVehicleChangeRequest {
   requestedAt: string | null;
   reviewedAt: string | null;
   target: {
-    vehicleType: string | null;
     vehicleSubcategoryId: string | null;
     driverPurpose: "passenger" | "delivery" | "both" | null;
     vehicleRegistration: string | null;
@@ -70,7 +69,6 @@ export interface DriverProfileResponse {
   fullName: string;
   phone: string;
   profileImageUrl: string | null;
-  vehicleType: string | null;
   vehicleSubcategoryId: string | null;
   driverPurpose: "passenger" | "delivery" | "both";
   vehicleRegistration: string | null;
@@ -86,7 +84,6 @@ export interface DriverProfileResponse {
 }
 
 export interface DriverVehicleUpdatePayload {
-  vehicleType?: string;
   vehicleSubcategoryId?: string;
   driverPurpose?: "passenger" | "delivery" | "both";
   vehicleRegistration?: string;
@@ -96,7 +93,6 @@ export interface DriverVehicleUpdatePayload {
 
 export interface DriverVehicleUpdateResponse {
   id: string;
-  vehicleType: string | null;
   vehicleSubcategoryId: string | null;
   driverPurpose: "passenger" | "delivery" | "both";
   vehicleSubcategory: DriverVehicleSubcategory | null;

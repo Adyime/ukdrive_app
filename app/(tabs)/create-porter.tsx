@@ -1070,7 +1070,6 @@ export default function CreatePorterScreen() {
         packageDimensions: formatDimensionsForApi(),
         packageDescription: packageDescription.trim() || undefined,
         isFragile,
-        vehicleType: selectedOption?.vehicleType ?? undefined,
         vehicleSubcategoryId: selectedOption?.vehicleSubcategoryId ?? undefined,
         paymentParty,
       };

@@ -208,7 +208,6 @@ export interface DriverOnboardingDraft {
   fullName: string;
   gender: "Male" | "Female" | "Others" | "";
   email: string;
-  vehicleType: string;
   vehicleSubcategoryId: string | null;
   driverPurpose: string;
   vehicleRegistration: string;
