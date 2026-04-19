@@ -6,7 +6,9 @@ module.exports = ({ config }) => {
   const argv = process.argv.join(" ").toLowerCase();
   const isAndroidBuild =
     buildPlatform === "android" ||
-    /\b(--platform|-p)\s+android\b/.test(argv);
+    /\b(--platform|-p)\s+android\b/.test(argv) ||
+    /\brun:android\b/.test(argv) ||
+    /\bexpo\s+run:android\b/.test(argv);
 
   const plugins = (baseConfig.plugins || []).filter((pluginEntry) => {
     const pluginName = Array.isArray(pluginEntry) ? pluginEntry[0] : pluginEntry;
