@@ -924,7 +924,11 @@ export default function HomeScreen() {
   }, [passengerLocation?.latitude, passengerLocation?.longitude]);
 
   useEffect(() => {
-    if (!isPassenger || !passengerMapRef.current) return;
+    // `setMapBoundaries` is only available on the Android/Google Maps native view.
+    // On iOS the app uses Apple Maps, so we rely on region clamping instead.
+    if (Platform.OS !== "android" || !isPassenger || !passengerMapRef.current) {
+      return;
+    }
     const center = {
       latitude:
         passengerLocation?.latitude ?? PASSENGER_MAP_DEFAULT_REGION.latitude,
