@@ -75,23 +75,8 @@ export function ImagePickerComponent({
     }
   }, [previewUri, value]);
 
-  const requestPermissions = async () => {
-    if (Platform.OS !== "web") {
-      const { status } =
-        await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (status !== "granted") {
-        toast.warning("Camera roll permission is needed to upload images.");
-        return false;
-      }
-    }
-    return true;
-  };
-
   const pickImage = async () => {
     if (disabled || uploading) return;
-
-    const hasPermission = await requestPermissions();
-    if (!hasPermission) return;
 
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
@@ -124,9 +109,6 @@ export function ImagePickerComponent({
 
   const takePhoto = async () => {
     if (disabled || uploading) return;
-
-    const hasPermission = await requestPermissions();
-    if (!hasPermission) return;
 
     // Request camera permission
     if (Platform.OS !== "web") {

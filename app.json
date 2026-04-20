@@ -22,7 +22,7 @@
     },
     "android": {
       "package": "com.wnapp.id1755261066753",
-      "versionCode": 58,
+      "versionCode": 61,
       "softwareKeyboardLayoutMode": "resize",
       "adaptiveIcon": {
         "backgroundColor": "#FFFFFF",
@@ -39,12 +39,16 @@
         "android.permission.FOREGROUND_SERVICE",
         "android.permission.FOREGROUND_SERVICE_LOCATION",
         "android.permission.CAMERA",
-        "android.permission.READ_MEDIA_IMAGES",
-        "android.permission.READ_EXTERNAL_STORAGE",
         "android.permission.USE_FULL_SCREEN_INTENT",
         "android.permission.VIBRATE",
         "android.permission.WAKE_LOCK",
-        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.POST_NOTIFICATIONS"
+      ],
+      "blockedPermissions": [
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.READ_MEDIA_VIDEO",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
         "android.permission.RECORD_AUDIO"
       ],
       "config": {}
@@ -100,7 +104,8 @@
         "expo-image-picker",
         {
           "photosPermission": "Allow UK Drive to access your photos to upload license and vehicle documents.",
-          "cameraPermission": "Allow UK Drive to use the camera to take photos of your documents."
+          "cameraPermission": "Allow UK Drive to use the camera to take photos of your documents.",
+          "microphonePermission": false
         }
       ],
       "@react-native-community/datetimepicker"
