@@ -80,7 +80,8 @@ export function ImagePickerComponent({
 
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: ["images"],
+        legacy: false,
         allowsEditing: false,
         quality: 0.8,
       });
