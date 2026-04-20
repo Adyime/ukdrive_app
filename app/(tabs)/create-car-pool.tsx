@@ -53,6 +53,7 @@ import {
   CarPoolStatus,
   isCarPoolActive,
 } from "@/lib/api/carPool";
+import { getDriverProfile } from "@/lib/api/driver";
 import {
   SAMPLE_LOCATIONS,
   type LocationWithAddress,
@@ -143,6 +144,9 @@ export default function CreateCarPoolScreen() {
 
   const [loading, setLoading] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
+  const [driverVehicleSubcategoryId, setDriverVehicleSubcategoryId] = useState<
+    string | null
+  >(null);
   const [errors, setErrors] = useState<{
     start?: string;
     end?: string;
@@ -257,6 +261,35 @@ export default function CreateCarPoolScreen() {
   useEffect(() => {
     void checkActiveCarPool();
   }, [checkActiveCarPool]);
+
+  useEffect(() => {
+    if (userType !== "driver") return;
+
+    let cancelled = false;
+
+    const loadDriverVehicleSubcategory = async () => {
+      try {
+        const response = await getDriverProfile();
+        if (cancelled) return;
+
+        if (response.success && response.data) {
+          setDriverVehicleSubcategoryId(
+            response.data.vehicleSubcategoryId ?? null
+          );
+        }
+      } catch (error) {
+        if (!cancelled) {
+          console.warn("Failed to load driver vehicle profile:", error);
+        }
+      }
+    };
+
+    void loadDriverVehicleSubcategory();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [userType]);
 
   useEffect(() => {
     refreshRecentLocations();
@@ -509,6 +542,25 @@ export default function CreateCarPoolScreen() {
     if (!validateForm() || !startCoords || !endCoords) return;
     setLoading(true);
     try {
+      let vehicleSubcategoryId = driverVehicleSubcategoryId;
+
+      if (!vehicleSubcategoryId) {
+        const profileResponse = await getDriverProfile();
+        if (profileResponse.success && profileResponse.data) {
+          vehicleSubcategoryId =
+            profileResponse.data.vehicleSubcategoryId ?? null;
+          setDriverVehicleSubcategoryId(vehicleSubcategoryId);
+        }
+      }
+
+      if (!vehicleSubcategoryId) {
+        toast.error(
+          "Complete your driver vehicle setup before creating a ride share."
+        );
+        router.push("/driver-vehicle");
+        return;
+      }
+
       const carPoolData: CreateCarPoolRequest = {
         startLatitude: startCoords.latitude,
         startLongitude: startCoords.longitude,
@@ -519,6 +571,7 @@ export default function CreateCarPoolScreen() {
         departureTime: departureTime.toISOString(),
         maxPassengers,
         baseFare: parseFloat(baseFare),
+        vehicleSubcategoryId,
         notes: notes.trim() || undefined,
       };
       const response = await createCarPool(carPoolData);
