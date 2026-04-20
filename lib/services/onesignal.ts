@@ -32,6 +32,9 @@ import { stopNativeIncomingAlertSound } from "@/lib/incoming-request-sound";
 import { resolveNotificationHref } from "@/lib/utils/notification-navigation";
 
 const ONESIGNAL_APP_ID = process.env.EXPO_PUBLIC_ONESIGNAL_APP_ID || "";
+const IOS_PUSH_ENABLED =
+  String(process.env.EXPO_PUBLIC_IOS_PUSH_ENABLED || "").toLowerCase() ===
+  "true";
 
 let currentUserId: string | null = null;
 const RIDE_TERMINAL_ERROR_CODES = new Set([
@@ -170,6 +173,15 @@ async function registerTokenWithServer(playerId: string): Promise<void> {
   await registerDeviceToken({ playerId, platform });
 }
 
+function isPushEnabledForCurrentPlatform(): boolean {
+  if (Platform.OS !== "ios") return true;
+  return IOS_PUSH_ENABLED;
+}
+
+export function isPushEnabledByConfig(): boolean {
+  return Boolean(ONESIGNAL_APP_ID) && isPushEnabledForCurrentPlatform();
+}
+
 /**
  * Initialize OneSignal - call once in root layout
  */
@@ -178,10 +190,16 @@ export function initializeOneSignal(): void {
     console.warn("[OneSignal] App ID not configured");
     return;
   }
+  if (!isPushEnabledForCurrentPlatform()) {
+    console.log("[OneSignal] iOS push is disabled by EXPO_PUBLIC_IOS_PUSH_ENABLED");
+    return;
+  }
 
   try {
     OneSignal.initialize(ONESIGNAL_APP_ID);
-    OneSignal.Notifications.requestPermission(true);
+    if (Platform.OS === "android") {
+      OneSignal.Notifications.requestPermission(true);
+    }
 
     // Android: Configure "Ride Requests" channel (high priority / heads-up) in OneSignal
     // dashboard: Settings → Notifications → Android Channel.
@@ -540,10 +558,21 @@ export async function registerForPushNotifications(
   userId: string,
   userType: "passenger" | "driver"
 ): Promise<string | null> {
-  if (!ONESIGNAL_APP_ID) return null;
+  if (!ONESIGNAL_APP_ID || !isPushEnabledForCurrentPlatform()) return null;
 
   try {
     currentUserId = userId;
+
+    if (Platform.OS === "ios") {
+      try {
+        const optedIn = await OneSignal.User.pushSubscription.getOptedInAsync();
+        if (!optedIn) {
+          await OneSignal.Notifications.requestPermission(true);
+        }
+      } catch {
+        // best-effort permission prompt
+      }
+    }
 
     OneSignal.login(userId);
     OneSignal.User.addTags({ userType, userId });
@@ -574,7 +603,7 @@ export async function registerForPushNotifications(
  * Unregister user from push notifications - call on logout
  */
 export function unregisterFromPushNotifications(): void {
-  if (!ONESIGNAL_APP_ID) return;
+  if (!ONESIGNAL_APP_ID || !isPushEnabledForCurrentPlatform()) return;
 
   try {
     currentUserId = null;
@@ -586,7 +615,7 @@ export function unregisterFromPushNotifications(): void {
 }
 
 export async function getPlayerId(): Promise<string | null> {
-  if (!ONESIGNAL_APP_ID) return null;
+  if (!ONESIGNAL_APP_ID || !isPushEnabledForCurrentPlatform()) return null;
   try {
     return await OneSignal.User.pushSubscription.getIdAsync();
   } catch {
@@ -595,7 +624,7 @@ export async function getPlayerId(): Promise<string | null> {
 }
 
 export async function isPushEnabled(): Promise<boolean> {
-  if (!ONESIGNAL_APP_ID) return false;
+  if (!ONESIGNAL_APP_ID || !isPushEnabledForCurrentPlatform()) return false;
   try {
     return await OneSignal.User.pushSubscription.getOptedInAsync();
   } catch {
@@ -604,7 +633,7 @@ export async function isPushEnabled(): Promise<boolean> {
 }
 
 export async function requestPushPermission(): Promise<boolean> {
-  if (!ONESIGNAL_APP_ID) return false;
+  if (!ONESIGNAL_APP_ID || !isPushEnabledForCurrentPlatform()) return false;
   try {
     return await OneSignal.Notifications.requestPermission(true);
   } catch {

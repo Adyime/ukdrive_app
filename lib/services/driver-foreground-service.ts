@@ -129,9 +129,12 @@ export async function requestBackgroundLocationPermissions(): Promise<boolean> {
     const backgroundStatus = await Location.requestBackgroundPermissionsAsync();
     if (backgroundStatus.status !== 'granted') {
       console.warn('[DriverForegroundService] Background location permission denied');
-      // On some devices, background permission prompt may not appear
-      // We'll still try to start the service, which may work with just foreground permission
-      return true; // Continue anyway, startLocationUpdatesAsync will handle it
+      if (Platform.OS === 'ios') {
+        // iOS requires "Always" access for reliable background tracking.
+        return false;
+      }
+      // Some Android variants allow startup and prompt upgrade later.
+      return true;
     }
 
     return true;
@@ -299,9 +302,11 @@ export async function getDriverServiceStatus(): Promise<{
       // Background permission may not be available
     }
 
+    const hasForegroundPermission = foregroundPerm.status === 'granted';
+    const hasBackgroundPermission = backgroundPerm.status === 'granted';
     const hasPermissions =
-      foregroundPerm.status === 'granted' &&
-      (backgroundPerm.status === 'granted' || Platform.OS === 'ios');
+      hasForegroundPermission &&
+      (Platform.OS === 'ios' ? hasBackgroundPermission : true);
 
     // Check location services
     const isLocationEnabled = await Location.hasServicesEnabledAsync();

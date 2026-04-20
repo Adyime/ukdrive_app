@@ -605,7 +605,12 @@ export default function HomeScreen() {
         const serviceStatus = await getDriverServiceStatus();
         if (response.data.isAvailable && walletEligible && !serviceStatus.isRunning) {
           // Service should be running but isn't - try to start it
-          await startDriverService();
+          const started = await startDriverService();
+          if (!started) {
+            console.warn(
+              "[HomeScreen] Driver is online but background tracking is not running."
+            );
+          }
         } else if (
           (!response.data.isAvailable || !walletEligible) &&
           serviceStatus.isRunning &&
@@ -692,7 +697,9 @@ export default function HomeScreen() {
         if (!hasPermission) {
           setIsAvailable(previousAvailability);
           toast.warning(
-            "UK Drive needs background location access to keep you available for rides while the app is minimized."
+            Platform.OS === "ios"
+              ? "Allow Always Location in iPhone Settings to stay online for ride requests in the background."
+              : "UK Drive needs background location access to keep you available for rides while the app is minimized."
           );
           setIsTogglingAvailability(false);
           return;
@@ -703,8 +710,10 @@ export default function HomeScreen() {
         if (!serviceStarted) {
           setIsAvailable(previousAvailability);
           toast.error(
-            "Failed to start location tracking service.",
-            "Please ensure location services are enabled and try again."
+            "Failed to start location tracking.",
+            Platform.OS === "ios"
+              ? "Please verify Location is set to Always and Background App Refresh is enabled."
+              : "Please ensure location services are enabled and try again."
           );
           setIsTogglingAvailability(false);
           return;

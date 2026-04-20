@@ -7,7 +7,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { LocalizedText as Text } from "@/components/localized-text";
 import {
-  View, TouchableOpacity, ActivityIndicator, StyleSheet } from "react-native";
+  View, TouchableOpacity, ActivityIndicator, StyleSheet, Platform } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { MapPin, Navigation, X, Check } from "lucide-react-native";
@@ -57,6 +57,10 @@ export default function PorterIncomingScreen() {
   const [accepting, setAccepting] = useState(false);
   const [dismissing, setDismissing] = useState(false);
   const [ended, setEnded] = useState(false);
+  const iosIncomingHint =
+    Platform.OS === "ios"
+      ? "If you opened from a notification, respond quickly. Expired requests are removed automatically."
+      : null;
 
   const soundRef = useRef<Audio.Sound | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -256,6 +260,9 @@ export default function PorterIncomingScreen() {
       <View style={styles.header}>
         <Text style={styles.title}>Incoming parcel request</Text>
         <Text style={styles.subtitle}>You have {countdown}s to respond</Text>
+        {iosIncomingHint ? (
+          <Text style={styles.iosHint}>{iosIncomingHint}</Text>
+        ) : null}
       </View>
 
       {loading ? (
@@ -364,6 +371,13 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: "#6B7280",
     marginTop: 6,
+  },
+  iosHint: {
+    fontFamily: "Figtree_400Regular",
+    fontSize: 12,
+    color: "#6B7280",
+    marginTop: 6,
+    textAlign: "center",
   },
   loadingBox: {
     flex: 1,

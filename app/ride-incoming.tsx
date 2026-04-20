@@ -12,6 +12,7 @@ import {
   ActivityIndicator,
   StyleSheet,
   ScrollView,
+  Platform,
 } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -957,12 +958,19 @@ export default function RideIncomingScreen() {
   }
 
   const title = requests.length > 1 ? "Incoming ride requests" : "Incoming ride request";
+  const iosIncomingHint =
+    Platform.OS === "ios"
+      ? "If you opened from a notification, respond quickly. Expired requests are removed automatically."
+      : null;
 
   return (
     <SafeAreaView style={styles.container} edges={["top", "bottom"]}>
       <View style={styles.header}>
         <Text style={styles.title}>{title}</Text>
         <Text style={styles.subtitle}>{requests.length} request{requests.length === 1 ? "" : "s"} waiting</Text>
+        {iosIncomingHint ? (
+          <Text style={styles.iosHint}>{iosIncomingHint}</Text>
+        ) : null}
       </View>
 
       <ScrollView
@@ -1098,6 +1106,13 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: "#6B7280",
     marginTop: 6,
+  },
+  iosHint: {
+    fontFamily: "Figtree_400Regular",
+    fontSize: 12,
+    color: "#6B7280",
+    marginTop: 6,
+    textAlign: "center",
   },
   listContent: {
     paddingBottom: 24,

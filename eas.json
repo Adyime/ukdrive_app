@@ -6,6 +6,10 @@
       "development": {
         "developmentClient": true,
         "distribution": "internal",
+        "env": {
+          "EXPO_PUBLIC_IOS_PUSH_ENABLED": "false",
+          "EXPO_IOS_ONESIGNAL_ENABLED": "false"
+        },
         "ios": {
           "simulator": true
         },
@@ -19,7 +23,9 @@
           "EXPO_PUBLIC_SUPABASE_URL": "SET_IN_EAS_ENV",
           "EXPO_PUBLIC_SUPABASE_ANON_KEY": "SET_IN_EAS_ENV",
           "EXPO_PUBLIC_ONESIGNAL_APP_ID": "SET_IN_EAS_ENV",
-          "EXPO_PUBLIC_GOOGLE_MAPS_API_KEY": "SET_IN_EAS_ENV"
+          "EXPO_PUBLIC_GOOGLE_MAPS_API_KEY": "SET_IN_EAS_ENV",
+          "EXPO_PUBLIC_IOS_PUSH_ENABLED": "true",
+          "EXPO_IOS_ONESIGNAL_ENABLED": "true"
         },
         "distribution": "internal",
         "ios": {
@@ -30,12 +36,15 @@
         }
       },
       "production": {
+        "autoIncrement": true,
         "env": {
           "EXPO_PUBLIC_API_URL": "SET_IN_EAS_ENV",
           "EXPO_PUBLIC_SUPABASE_URL": "SET_IN_EAS_ENV",
           "EXPO_PUBLIC_SUPABASE_ANON_KEY": "SET_IN_EAS_ENV",
           "EXPO_PUBLIC_ONESIGNAL_APP_ID": "SET_IN_EAS_ENV",
-          "EXPO_PUBLIC_GOOGLE_MAPS_API_KEY": "SET_IN_EAS_ENV"
+          "EXPO_PUBLIC_GOOGLE_MAPS_API_KEY": "SET_IN_EAS_ENV",
+          "EXPO_PUBLIC_IOS_PUSH_ENABLED": "true",
+          "EXPO_IOS_ONESIGNAL_ENABLED": "true"
         },
         "ios": {
           "simulator": false

@@ -5,7 +5,7 @@
 
 import * as Location from 'expo-location';
 import { useEffect, useState, useRef, useCallback } from 'react';
-import { AppState } from 'react-native';
+import { AppState, Platform } from 'react-native';
 import type { LocationWithAddress } from '@/lib/utils/location';
 
 // Re-export LocationWithAddress for convenience
@@ -72,10 +72,11 @@ export async function getLocationPermissions(): Promise<LocationPermissionStatus
       backgroundStatus = background.status === 'granted' ? 'granted'
         : background.status === 'denied' ? 'denied' : 'undetermined';
     } catch (bgError: any) {
-      // If background permission check fails (e.g., manifest not configured),
-      // just log it and continue with undetermined status
-      if (bgError?.message?.includes('ACCESS_BACKGROUND_LOCATION')) {
+      const message = String(bgError?.message || '');
+      if (Platform.OS === 'android' && message.includes('ACCESS_BACKGROUND_LOCATION')) {
         console.warn('Background location permission check failed. Make sure ACCESS_BACKGROUND_LOCATION is in AndroidManifest.');
+      } else if (Platform.OS === 'ios') {
+        console.warn('Background location permission check failed on iOS. Verify Always Location permission and Background Modes capability.');
       } else {
         console.warn('Background location permission check failed:', bgError);
       }
