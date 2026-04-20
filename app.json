@@ -2,11 +2,11 @@
   "expo": {
     "name": "uk-drive",
     "slug": "ukdrive",
-    "version": "1.0.0",
+    "version": "1.8.8",
     "orientation": "portrait",
     "scheme": "ukdrive",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
+    "newArchEnabled": false,
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.ukdrive.app",
@@ -21,7 +21,8 @@
       }
     },
     "android": {
-      "package": "com.ukdrive.app",
+      "package": "com.wnapp.id1755261066753",
+      "versionCode": 58,
       "softwareKeyboardLayoutMode": "resize",
       "adaptiveIcon": {
         "backgroundColor": "#FFFFFF",
