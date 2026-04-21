@@ -12,17 +12,13 @@
       "bundleIdentifier": "com.ukdrive.app",
       "buildNumber": "1",
       "infoPlist": {
-        "UIBackgroundModes": [
-          "location",
-          "fetch",
-          "remote-notification"
-        ],
+        "UIBackgroundModes": ["location", "fetch", "remote-notification"],
         "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
       "package": "com.wnapp.id1755261066753",
-      "versionCode": 61,
+      "versionCode": 64,
       "softwareKeyboardLayoutMode": "resize",
       "adaptiveIcon": {
         "backgroundColor": "#FFFFFF",
