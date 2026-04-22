@@ -18,7 +18,7 @@
     },
     "android": {
       "package": "com.wnapp.id1755261066753",
-      "versionCode": 64,
+      "versionCode": 66,
       "softwareKeyboardLayoutMode": "resize",
       "adaptiveIcon": {
         "backgroundColor": "#FFFFFF",
