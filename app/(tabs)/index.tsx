@@ -28,6 +28,7 @@ import { OneSignal } from "react-native-onesignal";
 import BottomSheet, { BottomSheetScrollView } from "@gorhom/bottom-sheet";
 import MapView, { Marker, PROVIDER_GOOGLE, type Region } from "react-native-maps";
 import { MAP_STYLE } from "@/constants/map-style";
+import { DriverMarker } from "@/components/map-markers";
 
 import { useAuth } from "@/context/auth-context";
 import { useAlert } from "@/context/alert-context";
@@ -43,10 +44,16 @@ import {
 } from "@/lib/api/driver";
 import { getWalletBalance } from "@/lib/api/wallet";
 import { getRidePayment } from "@/lib/api/payment";
-import { getPendingRides, acceptRide, type RideResponse } from "@/lib/api/ride";
+import {
+  getPendingRides,
+  acceptRide,
+  getNearbyDrivers,
+  type RideResponse,
+} from "@/lib/api/ride";
 import {
   getPendingPorterServices,
   acceptPorterService,
+  getNearbyDriversForPorter,
   type PorterServiceResponse,
 } from "@/lib/api/porter";
 import {
@@ -92,6 +99,7 @@ import autoImage from "@/assets/images/auto.png";
 import bikeImage from "@/assets/images/bike.png";
 import suvImage from "@/assets/images/suv.png";
 import { MapPinCheckInside } from "lucide-react-native";
+import { calculateHeadingBetweenCoordinates } from "@/lib/utils/vehicle-marker-assets";
 
 // Note: Active services now navigate directly to full-screen views instead of modals
 
@@ -113,6 +121,16 @@ const MAX_PASSENGER_LAT_DELTA =
   MAX_PASSENGER_MAP_ZOOM_OUT_KM / KM_PER_DEGREE_LATITUDE;
 const PENDING_RIDE_REFRESH_DEBOUNCE_MS = 350;
 const DRIVER_STATUS_REFRESH_INTERVAL_MS = 10000;
+const PASSENGER_NEARBY_VEHICLE_POLL_INTERVAL_MS = 7000;
+const PASSENGER_NEARBY_VEHICLE_RADIUS_KM = 3;
+
+type NearbyVehicleMarker = {
+  id: string;
+  latitude: number;
+  longitude: number;
+  vehicleType?: string | null;
+  heading?: number | null;
+};
 
 function getMaxLongitudeDeltaAtLatitude(latitude: number): number {
   const latitudeRadians = (latitude * Math.PI) / 180;
@@ -821,9 +839,19 @@ export default function HomeScreen() {
   const passengerSheetSnapPoints = useMemo(() => ["50%", "84%"], []);
   const [passengerLocation, setPassengerLocation] =
     useState<LocationWithAddress | null>(null);
+  const [passengerMapCenter, setPassengerMapCenter] = useState<{
+    latitude: number;
+    longitude: number;
+  } | null>(null);
   const [passengerRecentLocations, setPassengerRecentLocations] = useState<
     RecentLocation[]
   >([]);
+  const [passengerNearbyVehicles, setPassengerNearbyVehicles] = useState<
+    NearbyVehicleMarker[]
+  >([]);
+  const passengerNearbyVehiclePrevRef = useRef<
+    Map<string, { latitude: number; longitude: number }>
+  >(new Map());
   const passengerMapRegion = useMemo(
     () => ({
       latitude:
@@ -875,6 +903,10 @@ export default function HomeScreen() {
     try {
       const loc = await getCurrentPositionWithAddress();
       setPassengerLocation(loc);
+      setPassengerMapCenter({
+        latitude: loc.latitude,
+        longitude: loc.longitude,
+      });
       passengerMapRef.current?.animateToRegion(
         {
           latitude: loc.latitude,
@@ -921,6 +953,20 @@ export default function HomeScreen() {
       isPassengerMapRegionClamping.current = true;
       passengerMapRef.current?.animateToRegion(clampedRegion, 140);
     }
+
+    setPassengerMapCenter((previous) => {
+      if (
+        previous &&
+        Math.abs(previous.latitude - clampedRegion.latitude) < 0.0001 &&
+        Math.abs(previous.longitude - clampedRegion.longitude) < 0.0001
+      ) {
+        return previous;
+      }
+      return {
+        latitude: clampedRegion.latitude,
+        longitude: clampedRegion.longitude,
+      };
+    });
   }, [passengerLocation?.latitude, passengerLocation?.longitude]);
 
   useEffect(() => {
@@ -977,6 +1023,229 @@ export default function HomeScreen() {
       refreshPassengerRecentLocations,
     ])
   );
+
+  useEffect(() => {
+    if (!isPassenger || selectedMode === "carPool") {
+      passengerNearbyVehiclePrevRef.current = new Map();
+      setPassengerNearbyVehicles([]);
+      return;
+    }
+
+    const anchor =
+      passengerMapCenter ??
+      (passengerLocation
+        ? {
+            latitude: passengerLocation.latitude,
+            longitude: passengerLocation.longitude,
+          }
+        : {
+            latitude: passengerMapRegion.latitude,
+            longitude: passengerMapRegion.longitude,
+          });
+
+    let cancelled = false;
+
+    const fetchPassengerNearbyVehicles = async () => {
+      try {
+        const toNum = (
+          value: number | string | null | undefined
+        ): number => {
+          if (typeof value === "number" && !Number.isNaN(value)) return value;
+          if (typeof value === "string") return parseFloat(value);
+          return Number.NaN;
+        };
+
+        const response =
+          selectedMode === "porter"
+            ? await getNearbyDriversForPorter(
+                anchor.latitude,
+                anchor.longitude,
+                undefined,
+                PASSENGER_NEARBY_VEHICLE_RADIUS_KM
+              )
+            : await getNearbyDrivers(
+                anchor.latitude,
+                anchor.longitude,
+                undefined,
+                PASSENGER_NEARBY_VEHICLE_RADIUS_KM
+              );
+
+        if (cancelled || !response.success) return;
+
+        const extractDrivers = (res: {
+          success?: boolean;
+          data?: unknown;
+        }): unknown[] => {
+          if (!res?.success) return [];
+          const payload = res.data as Record<string, unknown> | undefined;
+          if (!payload) return [];
+          const direct = payload.drivers;
+          const nested = (payload.data as Record<string, unknown> | undefined)
+            ?.drivers;
+          const list = nested ?? direct ?? [];
+          return Array.isArray(list) ? list : [];
+        };
+
+        const rawDrivers = extractDrivers(response);
+
+        const previousPositions = passengerNearbyVehiclePrevRef.current;
+        const nextPositions = new Map<
+          string,
+          { latitude: number; longitude: number }
+        >();
+
+        const markers: NearbyVehicleMarker[] = [];
+        for (const rawDriver of rawDrivers) {
+          const driver = rawDriver as {
+            id?: unknown;
+            latitude?: unknown;
+            longitude?: unknown;
+            lat?: unknown;
+            lng?: unknown;
+            location?: {
+              latitude?: unknown;
+              longitude?: unknown;
+              lat?: unknown;
+              lng?: unknown;
+            } | null;
+            coordinate?: {
+              latitude?: unknown;
+              longitude?: unknown;
+              lat?: unknown;
+              lng?: unknown;
+            } | null;
+            heading?: unknown;
+            vehicleType?: unknown;
+            vehicle_type?: unknown;
+            vehicleSubcategorySlug?: unknown;
+            vehicle_subcategory_slug?: unknown;
+            vehicleCategorySlug?: unknown;
+            vehicle_category_slug?: unknown;
+            vehicleCategoryName?: unknown;
+            vehicle_category_name?: unknown;
+            vehicleSubcategory?: { slug?: unknown } | null;
+            vehicle_subcategory?: { slug?: unknown } | null;
+            vehicleCategory?: { slug?: unknown; name?: unknown } | null;
+            vehicle_category?: { slug?: unknown; name?: unknown } | null;
+            slug?: unknown;
+          };
+
+          const latCandidates = [
+            driver.latitude,
+            driver.lat,
+            driver.location?.latitude,
+            driver.location?.lat,
+            driver.coordinate?.latitude,
+            driver.coordinate?.lat,
+          ];
+
+          const lngCandidates = [
+            driver.longitude,
+            driver.lng,
+            driver.location?.longitude,
+            driver.location?.lng,
+            driver.coordinate?.longitude,
+            driver.coordinate?.lng,
+          ];
+
+          const latitude =
+            latCandidates
+              .map((value) =>
+                toNum(value as number | string | null | undefined)
+              )
+              .find((value) => Number.isFinite(value)) ?? Number.NaN;
+          const longitude =
+            lngCandidates
+              .map((value) =>
+                toNum(value as number | string | null | undefined)
+              )
+              .find((value) => Number.isFinite(value)) ?? Number.NaN;
+
+          if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+            continue;
+          }
+
+          const idRaw = driver.id;
+          const id =
+            typeof idRaw === "string" && idRaw.trim().length > 0
+              ? idRaw
+              : `${latitude}:${longitude}`;
+
+          const previous = previousPositions.get(id);
+          const rawHeading = toNum(
+            driver.heading as number | string | null | undefined
+          );
+          const heading =
+            Number.isFinite(rawHeading) && rawHeading >= 0
+              ? rawHeading
+              : previous
+              ? calculateHeadingBetweenCoordinates(previous, {
+                  latitude,
+                  longitude,
+                })
+              : null;
+
+          nextPositions.set(id, { latitude, longitude });
+
+          const resolvedVehicleType = [
+            driver.vehicleCategorySlug,
+            driver.vehicle_category_slug,
+            driver.vehicleCategory?.slug,
+            driver.vehicle_category?.slug,
+            driver.vehicleCategoryName,
+            driver.vehicle_category_name,
+            driver.vehicleCategory?.name,
+            driver.vehicle_category?.name,
+            driver.vehicleType,
+            driver.vehicle_type,
+            driver.vehicleSubcategorySlug,
+            driver.vehicle_subcategory_slug,
+            driver.vehicleSubcategory?.slug,
+            driver.vehicle_subcategory?.slug,
+            driver.slug,
+          ].find(
+            (value): value is string =>
+              typeof value === "string" && value.trim().length > 0
+          );
+
+          markers.push({
+            id,
+            latitude,
+            longitude,
+            heading,
+            vehicleType: resolvedVehicleType ?? null,
+          });
+        }
+
+        passengerNearbyVehiclePrevRef.current = nextPositions;
+        setPassengerNearbyVehicles(markers);
+      } catch (error) {
+        if (!cancelled) {
+          console.warn("[Home] Failed to fetch nearby vehicles:", error);
+        }
+      }
+    };
+
+    void fetchPassengerNearbyVehicles();
+    const interval = setInterval(
+      fetchPassengerNearbyVehicles,
+      PASSENGER_NEARBY_VEHICLE_POLL_INTERVAL_MS
+    );
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [
+    isPassenger,
+    selectedMode,
+    passengerLocation?.latitude,
+    passengerLocation?.longitude,
+    passengerMapCenter?.latitude,
+    passengerMapCenter?.longitude,
+    passengerMapRegion.latitude,
+    passengerMapRegion.longitude,
+  ]);
 
   const clearPendingRideRefreshTimeout = useCallback(() => {
     if (pendingRideRefreshTimeoutRef.current) {
@@ -1354,6 +1623,18 @@ export default function HomeScreen() {
               >
                 <Ionicons name="location" size={30} color={BRAND_ORANGE} />
               </Marker>
+              {passengerNearbyVehicles.map((vehicle) => (
+                <DriverMarker
+                  key={`home-nearby-${vehicle.id}`}
+                  coordinate={{
+                    latitude: vehicle.latitude,
+                    longitude: vehicle.longitude,
+                  }}
+                  title="Nearby vehicle"
+                  vehicleType={vehicle.vehicleType ?? undefined}
+                  heading={vehicle.heading ?? null}
+                />
+              ))}
             </MapView>
           ) : (
             <View
