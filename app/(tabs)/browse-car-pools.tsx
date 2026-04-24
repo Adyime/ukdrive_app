@@ -115,7 +115,7 @@ export default function BrowseCarPoolsScreen() {
   const bothLocationsSelected =
     pickupCoords !== null && destinationCoords !== null;
 
-  const getMapRegion = () => {
+  const mapRegion = useMemo(() => {
     if (pickupCoords && destinationCoords) {
       const minLat = Math.min(
         pickupCoords.latitude,
@@ -140,22 +140,24 @@ export default function BrowseCarPoolsScreen() {
         longitudeDelta: Math.max((maxLng - minLng) * 1.5, LONGITUDE_DELTA),
       };
     }
-    if (currentLocation) {
+    const anchor = pickupCoords ?? destinationCoords ?? currentLocation;
+    if (anchor) {
       return {
-        latitude: currentLocation.latitude,
-        longitude: currentLocation.longitude,
+        latitude: anchor.latitude,
+        longitude: anchor.longitude,
         latitudeDelta: LATITUDE_DELTA,
         longitudeDelta: LONGITUDE_DELTA,
       };
     }
-    return {
-      latitude: 28.6139,
-      longitude: 77.209,
-      latitudeDelta: LATITUDE_DELTA,
-      longitudeDelta: LONGITUDE_DELTA,
-    };
-  };
-  const mapRegion = getMapRegion();
+    return null;
+  }, [
+    pickupCoords?.latitude,
+    pickupCoords?.longitude,
+    destinationCoords?.latitude,
+    destinationCoords?.longitude,
+    currentLocation?.latitude,
+    currentLocation?.longitude,
+  ]);
 
   useEffect(() => {
     if (currentLocation && !pickupCoords && userType === "passenger") {
@@ -171,6 +173,12 @@ export default function BrowseCarPoolsScreen() {
         currentLocation.longitude,
         currentLocation.address
       ).catch(() => {});
+      mapRef.current?.animateToRegion({
+        latitude: currentLocation.latitude,
+        longitude: currentLocation.longitude,
+        latitudeDelta: LATITUDE_DELTA,
+        longitudeDelta: LONGITUDE_DELTA,
+      });
     }
   }, [currentLocation, pickupCoords, userType]);
 
@@ -496,30 +504,55 @@ export default function BrowseCarPoolsScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: "#1a1a2e" }}>
       {/* Full-screen map */}
-      <MapView
-        ref={mapRef}
-        style={StyleSheet.absoluteFillObject}
-        provider={Platform.OS === "android" ? PROVIDER_GOOGLE : undefined}
-        customMapStyle={Platform.OS === "android" ? MAP_STYLE : undefined}
-        initialRegion={mapRegion}
-        showsUserLocation
-        showsMyLocationButton={false}
-      >
-        {pickupCoords && (
-          <PickupMarker
-            key="pickup-marker"
-            coordinate={pickupCoords}
-            title="Pickup"
-          />
-        )}
-        {destinationCoords && (
-          <DestinationMarker
-            key="destination-marker"
-            coordinate={destinationCoords}
-            title="Destination"
-          />
-        )}
-      </MapView>
+      {mapRegion ? (
+        <MapView
+          ref={mapRef}
+          style={StyleSheet.absoluteFillObject}
+          provider={Platform.OS === "android" ? PROVIDER_GOOGLE : undefined}
+          customMapStyle={Platform.OS === "android" ? MAP_STYLE : undefined}
+          initialRegion={mapRegion}
+          showsUserLocation
+          showsMyLocationButton={false}
+        >
+          {pickupCoords && (
+            <PickupMarker
+              key="pickup-marker"
+              coordinate={pickupCoords}
+              title="Pickup"
+            />
+          )}
+          {destinationCoords && (
+            <DestinationMarker
+              key="destination-marker"
+              coordinate={destinationCoords}
+              title="Destination"
+            />
+          )}
+        </MapView>
+      ) : (
+        <View
+          style={[
+            StyleSheet.absoluteFillObject,
+            {
+              alignItems: "center",
+              justifyContent: "center",
+              backgroundColor: "#F3F4F6",
+            },
+          ]}
+        >
+          <ActivityIndicator size="small" color={BRAND_ORANGE} />
+          <Text
+            style={{
+              marginTop: 10,
+              color: "#374151",
+              fontFamily: "Figtree_600SemiBold",
+              fontSize: 14,
+            }}
+          >
+            Fetching your current location...
+          </Text>
+        </View>
+      )}
 
       {/* Back button */}
       <TouchableOpacity

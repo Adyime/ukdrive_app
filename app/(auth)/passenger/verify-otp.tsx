@@ -13,7 +13,13 @@ import { sendOtp, verifyOtp } from "@/lib/api/auth";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 import {
-  KeyboardAvoidingView, Platform, ScrollView, TouchableOpacity, View } from "react-native";
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  TouchableOpacity,
+  View,
+} from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
 const BRAND_ORANGE = "#F36D14";
@@ -52,17 +58,40 @@ export default function PassengerVerifyOtpScreen() {
     return () => clearInterval(t);
   }, [resendCooldown]);
 
-  const handleVerifyOtp = async (otpCode: string) => {
+  const handleVerifyOtp = async (
+    otpCode: string,
+    options?: { forceLogin?: boolean; sessionTakeoverToken?: string }
+  ) => {
     if (!phone) return;
 
     setError("");
     setLoading(true);
 
     try {
-      const response = await verifyOtp(phone, otpCode, "passenger");
+      const response = await verifyOtp(phone, otpCode, "passenger", options);
 
       if (response.success && response.data) {
         const { data } = response;
+
+        if (data.requiresSessionTakeover && data.sessionTakeoverToken) {
+          Alert.alert(
+            "Continue Login?",
+            "This number is already logged in on another device. Continue and logout old device?",
+            [
+              { text: "Cancel", style: "cancel" },
+              {
+                text: "Continue",
+                onPress: () => {
+                  void handleVerifyOtp(otpCode, {
+                    forceLogin: true,
+                    sessionTakeoverToken: data.sessionTakeoverToken,
+                  });
+                },
+              },
+            ]
+          );
+          return;
+        }
 
         if (data.verified) {
           if (data.isNewUser && data.requiresRegistration) {
@@ -79,7 +108,10 @@ export default function PassengerVerifyOtpScreen() {
             await login(data.tokens, data.user as any, "passenger");
             router.replace("/(tabs)");
           }
+          return;
         }
+
+        setError(t("Invalid OTP. Please try again."));
       } else {
         const errorMessage =
           typeof response.error === "object" &&

@@ -36,6 +36,8 @@ export interface OtpVerifyResponse {
   isNewUser: boolean;
   requiresRegistration?: boolean;
   requiresOnboarding?: boolean;
+  requiresSessionTakeover?: boolean;
+  sessionTakeoverToken?: string;
   tokens?: {
     accessToken: string;
     refreshToken: string;
@@ -100,11 +102,19 @@ export async function sendOtp(
 export async function verifyOtp(
   phone: string,
   otp: string,
-  userType: UserType
+  userType: UserType,
+  options?: {
+    forceLogin?: boolean;
+    sessionTakeoverToken?: string;
+  }
 ): Promise<{ success: boolean; data?: OtpVerifyResponse; error?: unknown }> {
   return post<OtpVerifyResponse>(`/api/auth/${userType}/verify-otp`, {
     phone,
     otp,
+    ...(options?.forceLogin ? { forceLogin: true } : {}),
+    ...(options?.sessionTakeoverToken
+      ? { sessionTakeoverToken: options.sessionTakeoverToken }
+      : {}),
   });
 }
 

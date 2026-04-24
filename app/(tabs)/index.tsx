@@ -109,12 +109,9 @@ const RUPEE = "\u20B9";
 const BULLET = "\u2022";
 const DRIVER_WALLET_NEGATIVE_MESSAGE =
   "Your wallet balance is below 0. Please recharge your wallet to continue getting rides.";
-const PASSENGER_MAP_DEFAULT_REGION = {
-  latitude: 28.6139,
-  longitude: 77.209,
-  latitudeDelta: 0.06,
-  longitudeDelta: 0.06,
-};
+const PASSENGER_MAP_INITIAL_LATITUDE_DELTA = 0.0085;
+const PASSENGER_MAP_INITIAL_LONGITUDE_DELTA = 0.0085;
+const PASSENGER_MAP_BOTTOM_PADDING_RATIO = 0.5;
 const MAX_PASSENGER_MAP_ZOOM_OUT_KM = 40;
 const KM_PER_DEGREE_LATITUDE = 111.32;
 const MAX_PASSENGER_LAT_DELTA =
@@ -322,6 +319,12 @@ export default function HomeScreen() {
   const toast = useToast();
   const { showAlert } = useAlert();
   const insets = useSafeAreaInsets();
+  const passengerMapBottomPadding = useMemo(
+    () =>
+      Math.round(Dimensions.get("window").height * PASSENGER_MAP_BOTTOM_PADDING_RATIO) +
+      insets.bottom,
+    [insets.bottom]
+  );
   const [refreshing, setRefreshing] = useState(false);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [isAvailable, setIsAvailable] = useState(true);
@@ -853,23 +856,41 @@ export default function HomeScreen() {
     Map<string, { latitude: number; longitude: number }>
   >(new Map());
   const passengerMapRegion = useMemo(
-    () => ({
-      latitude:
-        passengerLocation?.latitude ?? PASSENGER_MAP_DEFAULT_REGION.latitude,
-      longitude:
-        passengerLocation?.longitude ?? PASSENGER_MAP_DEFAULT_REGION.longitude,
-      latitudeDelta: PASSENGER_MAP_DEFAULT_REGION.latitudeDelta,
-      longitudeDelta: PASSENGER_MAP_DEFAULT_REGION.longitudeDelta,
-    }),
-    [passengerLocation?.latitude, passengerLocation?.longitude]
+    (): Region | null => {
+      const baseCenter =
+        passengerMapCenter ??
+        (passengerLocation
+          ? {
+              latitude: passengerLocation.latitude,
+              longitude: passengerLocation.longitude,
+            }
+          : null);
+
+      if (!baseCenter) return null;
+
+      return {
+        latitude: baseCenter.latitude,
+        longitude: baseCenter.longitude,
+        latitudeDelta: PASSENGER_MAP_INITIAL_LATITUDE_DELTA,
+        longitudeDelta: PASSENGER_MAP_INITIAL_LONGITUDE_DELTA,
+      };
+    },
+    [
+      passengerMapCenter?.latitude,
+      passengerMapCenter?.longitude,
+      passengerLocation?.latitude,
+      passengerLocation?.longitude,
+    ]
   );
+  const passengerReferenceLatitude =
+    passengerMapCenter?.latitude ?? passengerLocation?.latitude ?? 0;
   const passengerMinZoomLevel = useMemo(
     () =>
       getMinZoomLevelForDistanceKm(
         MAX_PASSENGER_MAP_ZOOM_OUT_KM,
-        passengerMapRegion.latitude
+        passengerReferenceLatitude
       ),
-    [passengerMapRegion.latitude]
+    [passengerReferenceLatitude]
   );
   const displayedPassengerRecentLocations = useMemo(
     () => passengerRecentLocations.slice(0, 2),
@@ -911,8 +932,8 @@ export default function HomeScreen() {
         {
           latitude: loc.latitude,
           longitude: loc.longitude,
-          latitudeDelta: PASSENGER_MAP_DEFAULT_REGION.latitudeDelta,
-          longitudeDelta: PASSENGER_MAP_DEFAULT_REGION.longitudeDelta,
+          latitudeDelta: PASSENGER_MAP_INITIAL_LATITUDE_DELTA,
+          longitudeDelta: PASSENGER_MAP_INITIAL_LONGITUDE_DELTA,
         },
         450
       );
@@ -936,12 +957,15 @@ export default function HomeScreen() {
       return;
     }
 
-    const anchor = {
-      latitude:
-        passengerLocation?.latitude ?? PASSENGER_MAP_DEFAULT_REGION.latitude,
-      longitude:
-        passengerLocation?.longitude ?? PASSENGER_MAP_DEFAULT_REGION.longitude,
-    };
+    const anchor = passengerLocation
+      ? {
+          latitude: passengerLocation.latitude,
+          longitude: passengerLocation.longitude,
+        }
+      : passengerMapCenter ?? {
+          latitude: region.latitude,
+          longitude: region.longitude,
+        };
     const clampedRegion = clampPassengerMapRegion(region, anchor);
     const hasExceededZoomOutLimit =
       Math.abs(clampedRegion.latitude - region.latitude) > 0.0001 ||
@@ -967,7 +991,12 @@ export default function HomeScreen() {
         longitude: clampedRegion.longitude,
       };
     });
-  }, [passengerLocation?.latitude, passengerLocation?.longitude]);
+  }, [
+    passengerLocation?.latitude,
+    passengerLocation?.longitude,
+    passengerMapCenter?.latitude,
+    passengerMapCenter?.longitude,
+  ]);
 
   useEffect(() => {
     // `setMapBoundaries` is only available on the Android/Google Maps native view.
@@ -975,12 +1004,13 @@ export default function HomeScreen() {
     if (Platform.OS !== "android" || !isPassenger || !passengerMapRef.current) {
       return;
     }
-    const center = {
-      latitude:
-        passengerLocation?.latitude ?? PASSENGER_MAP_DEFAULT_REGION.latitude,
-      longitude:
-        passengerLocation?.longitude ?? PASSENGER_MAP_DEFAULT_REGION.longitude,
-    };
+    const center = passengerLocation
+      ? {
+          latitude: passengerLocation.latitude,
+          longitude: passengerLocation.longitude,
+        }
+      : passengerMapCenter;
+    if (!center) return;
     const boundsDistanceKm = MAX_PASSENGER_MAP_ZOOM_OUT_KM;
     const latitudeOffset = getLatitudeDeltaForDistanceKm(boundsDistanceKm);
     const longitudeOffset = getLongitudeDeltaForDistanceKm(
@@ -1004,7 +1034,13 @@ export default function HomeScreen() {
     };
 
     mapRef.setMapBoundaries?.(northEast, southWest);
-  }, [isPassenger, passengerLocation?.latitude, passengerLocation?.longitude]);
+  }, [
+    isPassenger,
+    passengerLocation?.latitude,
+    passengerLocation?.longitude,
+    passengerMapCenter?.latitude,
+    passengerMapCenter?.longitude,
+  ]);
 
   useEffect(() => {
     if (!isPassenger) return;
@@ -1038,10 +1074,13 @@ export default function HomeScreen() {
             latitude: passengerLocation.latitude,
             longitude: passengerLocation.longitude,
           }
-        : {
-            latitude: passengerMapRegion.latitude,
-            longitude: passengerMapRegion.longitude,
-          });
+        : null);
+
+    if (!anchor) {
+      passengerNearbyVehiclePrevRef.current = new Map();
+      setPassengerNearbyVehicles([]);
+      return;
+    }
 
     let cancelled = false;
 
@@ -1243,8 +1282,6 @@ export default function HomeScreen() {
     passengerLocation?.longitude,
     passengerMapCenter?.latitude,
     passengerMapCenter?.longitude,
-    passengerMapRegion.latitude,
-    passengerMapRegion.longitude,
   ]);
 
   const clearPendingRideRefreshTimeout = useCallback(() => {
@@ -1600,12 +1637,18 @@ export default function HomeScreen() {
       <View style={{ flex: 1, backgroundColor: "#000" }}>
         <StatusBar style="dark" translucent backgroundColor="transparent" />
         <View style={{ flex: 1, backgroundColor: "#fff" }}>
-          {canRenderAndroidMap ? (
+          {canRenderAndroidMap && passengerMapRegion ? (
             <MapView
               ref={passengerMapRef}
               provider={Platform.OS === "android" ? PROVIDER_GOOGLE : undefined}
               customMapStyle={Platform.OS === "android" ? MAP_STYLE : undefined}
               style={{ position: "absolute", top: 0, right: 0, bottom: 0, left: 0 }}
+              mapPadding={{
+                top: 0,
+                right: 0,
+                bottom: passengerMapBottomPadding,
+                left: 0,
+              }}
               initialRegion={passengerMapRegion}
               onRegionChangeComplete={handlePassengerMapRegionChangeComplete}
               minZoomLevel={passengerMinZoomLevel}
@@ -1617,8 +1660,14 @@ export default function HomeScreen() {
             >
               <Marker
                 coordinate={{
-                  latitude: passengerMapRegion.latitude,
-                  longitude: passengerMapRegion.longitude,
+                  latitude:
+                    passengerLocation?.latitude ??
+                    passengerMapCenter?.latitude ??
+                    passengerMapRegion.latitude,
+                  longitude:
+                    passengerLocation?.longitude ??
+                    passengerMapCenter?.longitude ??
+                    passengerMapRegion.longitude,
                 }}
               >
                 <Ionicons name="location" size={30} color={BRAND_ORANGE} />
@@ -1636,6 +1685,33 @@ export default function HomeScreen() {
                 />
               ))}
             </MapView>
+          ) : canRenderAndroidMap ? (
+            <View
+              style={{
+                position: "absolute",
+                top: 0,
+                right: 0,
+                bottom: 0,
+                left: 0,
+                backgroundColor: "#F3F4F6",
+                alignItems: "center",
+                justifyContent: "center",
+                paddingHorizontal: 24,
+              }}
+            >
+              <ActivityIndicator size="small" color={BRAND_ORANGE} />
+              <Text
+                style={{
+                  marginTop: 10,
+                  fontFamily: "Figtree_600SemiBold",
+                  fontSize: 14,
+                  color: "#374151",
+                  textAlign: "center",
+                }}
+              >
+                Fetching your current location...
+              </Text>
+            </View>
           ) : (
             <View
               style={{
