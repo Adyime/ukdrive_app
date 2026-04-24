@@ -8,13 +8,13 @@ import { LocalizedText as Text } from "@/components/localized-text";
 import { OtpInput } from "@/components/ui/otp-input";
 import { useToast } from "@/components/ui/toast";
 import { useAuth } from "@/context/auth-context";
+import { useAlert } from "@/context/alert-context";
 import { useLanguage } from "@/context/language-context";
 import { sendOtp, verifyOtp } from "@/lib/api/auth";
 import { saveDriverOnboardingContext } from "@/lib/storage";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 import {
-  Alert,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -31,6 +31,7 @@ export default function DriverVerifyOtpScreen() {
   const insets = useSafeAreaInsets();
   const { phone } = useLocalSearchParams<{ phone: string }>();
   const { login } = useAuth();
+  const { showAlert } = useAlert();
   const { t } = useLanguage();
   const toast = useToast();
   const [error, setError] = useState("");
@@ -75,11 +76,15 @@ export default function DriverVerifyOtpScreen() {
         const { data } = response;
 
         if (data.requiresSessionTakeover && data.sessionTakeoverToken) {
-          Alert.alert(
+          showAlert(
             "Continue Login?",
             "This number is already logged in on another device. Continue and logout old device?",
             [
-              { text: "Cancel", style: "cancel" },
+              {
+                text: "Cancel",
+                style: "cancel",
+                onPress: () => router.replace("/(auth)"),
+              },
               {
                 text: "Continue",
                 onPress: () => {
@@ -89,7 +94,8 @@ export default function DriverVerifyOtpScreen() {
                   });
                 },
               },
-            ]
+            ],
+            { brandColorOverride: BRAND_PURPLE }
           );
           return;
         }
