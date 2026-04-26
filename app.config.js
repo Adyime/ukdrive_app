@@ -9,12 +9,23 @@ module.exports = ({ config }) => {
     /\b(--platform|-p)\s+android\b/.test(argv) ||
     /\brun:android\b/.test(argv) ||
     /\bexpo\s+run:android\b/.test(argv);
+  const isIosBuild =
+    buildPlatform === "ios" ||
+    /\b(--platform|-p)\s+ios\b/.test(argv) ||
+    /\brun:ios\b/.test(argv) ||
+    /\bexpo\s+run:ios\b/.test(argv);
+  const enableIosOneSignalPlugin =
+    String(
+      process.env.EXPO_IOS_ONESIGNAL_ENABLED ||
+        process.env.EXPO_PUBLIC_IOS_PUSH_ENABLED ||
+        "false"
+    ).toLowerCase() === "true";
 
   const plugins = (baseConfig.plugins || []).filter((pluginEntry) => {
     const pluginName = Array.isArray(pluginEntry) ? pluginEntry[0] : pluginEntry;
-    // OneSignal plugin injects iOS NSE target with fixed bundle id.
-    // Keep it only for Android builds to avoid iOS credential target conflicts.
-    if (!isAndroidBuild && pluginName === "onesignal-expo-plugin") {
+    if (pluginName === "onesignal-expo-plugin") {
+      if (isAndroidBuild) return true;
+      if (isIosBuild) return enableIosOneSignalPlugin;
       return false;
     }
     return true;
@@ -46,6 +57,20 @@ module.exports = ({ config }) => {
 
   const resolvedPlugins = plugins.map((pluginEntry) => {
     const pluginName = Array.isArray(pluginEntry) ? pluginEntry[0] : pluginEntry;
+    if (pluginName === "onesignal-expo-plugin") {
+      const existingConfig =
+        Array.isArray(pluginEntry) && pluginEntry[1] && typeof pluginEntry[1] === "object"
+          ? pluginEntry[1]
+          : {};
+      return [
+        "onesignal-expo-plugin",
+        {
+          ...existingConfig,
+          mode: isProductionBuild ? "production" : "development",
+        },
+      ];
+    }
+
     if (pluginName !== "expo-build-properties") {
       return pluginEntry;
     }
@@ -71,6 +96,7 @@ module.exports = ({ config }) => {
     ...baseConfig,
     extra: {
       ...(baseConfig.extra || {}),
+      iosPushEnabled: enableIosOneSignalPlugin,
       ...(hasValidGoogleMapsApiKey ? { googleMapsApiKey } : {}),
     },
     ios: {

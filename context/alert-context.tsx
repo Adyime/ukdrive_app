@@ -25,16 +25,23 @@ interface AlertState {
   title: string;
   message?: string;
   buttons: AlertButton[];
+  brandColorOverride?: string;
 }
 
 interface AlertContextType {
-  showAlert: (title: string, message?: string, buttons?: AlertButton[]) => void;
+  showAlert: (
+    title: string,
+    message?: string,
+    buttons?: AlertButton[],
+    options?: { brandColorOverride?: string }
+  ) => void;
 }
 
 const defaultState: AlertState = {
   title: '',
   message: '',
   buttons: [],
+  brandColorOverride: undefined,
 };
 
 const AlertContext = createContext<AlertContextType | undefined>(undefined);
@@ -122,12 +129,18 @@ export function AlertProvider({ children }: { children: React.ReactNode }) {
   const brandColor = userType === 'driver' ? BRAND_PURPLE : BRAND_ORANGE;
 
   const showAlert = useCallback(
-    (title: string, message?: string, buttons?: AlertButton[]) => {
+    (
+      title: string,
+      message?: string,
+      buttons?: AlertButton[],
+      options?: { brandColorOverride?: string }
+    ) => {
       const defaultButtons: AlertButton[] = [{ text: 'OK', style: 'default' }];
       setState({
         title,
         message: message ?? '',
         buttons: buttons ?? defaultButtons,
+        brandColorOverride: options?.brandColorOverride,
       });
     },
     []
@@ -146,7 +159,7 @@ export function AlertProvider({ children }: { children: React.ReactNode }) {
         message={state.message}
         buttons={state.buttons}
         onDismiss={hideAlert}
-        brandColor={brandColor}
+        brandColor={state.brandColorOverride ?? brandColor}
       />
     </AlertContext.Provider>
   );

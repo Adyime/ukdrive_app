@@ -7,6 +7,7 @@
  */
 
 import RazorpayCheckout from 'react-native-razorpay';
+import { Platform } from 'react-native';
 
 // ============================================
 // Types
@@ -51,6 +52,7 @@ export interface RazorpayErrorResult {
   error: {
     code: string;
     description: string;
+    platform: string;
     source?: string;
     step?: string;
     reason?: string;
@@ -124,16 +126,26 @@ export async function openCheckout(options: RazorpayOptions): Promise<RazorpayRe
       signature: result.razorpay_signature,
     };
   } catch (error: any) {
+    const code = error?.code?.toString() || 'UNKNOWN';
+    const description =
+      error?.description || error?.message || 'Payment failed or cancelled';
+
     if (__DEV__) {
-      console.log('[Razorpay] Checkout error/cancelled:', error);
+      console.log('[Razorpay] Checkout error/cancelled:', {
+        platform: Platform.OS,
+        code,
+        description,
+        raw: error,
+      });
     }
 
     // Handle cancellation and errors
     const errorResult: RazorpayErrorResult = {
       success: false,
       error: {
-        code: error.code?.toString() || 'UNKNOWN',
-        description: error.description || error.message || 'Payment failed or cancelled',
+        code,
+        description,
+        platform: Platform.OS,
         source: error.source,
         step: error.step,
         reason: error.reason,

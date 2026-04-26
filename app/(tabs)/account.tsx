@@ -232,14 +232,9 @@ export default function AccountScreen() {
     if (!userType || !user || isUpdatingProfilePhoto) return;
 
     try {
-      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (status !== "granted") {
-        toast.warning("Gallery permission is needed to upload profile photo.");
-        return;
-      }
-
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: ["images"],
+        legacy: false,
         allowsEditing: false,
         quality: 0.8,
       });

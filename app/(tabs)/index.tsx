@@ -28,6 +28,7 @@ import { OneSignal } from "react-native-onesignal";
 import BottomSheet, { BottomSheetScrollView } from "@gorhom/bottom-sheet";
 import MapView, { Marker, PROVIDER_GOOGLE, type Region } from "react-native-maps";
 import { MAP_STYLE } from "@/constants/map-style";
+import { DriverMarker } from "@/components/map-markers";
 
 import { useAuth } from "@/context/auth-context";
 import { useAlert } from "@/context/alert-context";
@@ -43,10 +44,16 @@ import {
 } from "@/lib/api/driver";
 import { getWalletBalance } from "@/lib/api/wallet";
 import { getRidePayment } from "@/lib/api/payment";
-import { getPendingRides, acceptRide, type RideResponse } from "@/lib/api/ride";
+import {
+  getPendingRides,
+  acceptRide,
+  getNearbyDrivers,
+  type RideResponse,
+} from "@/lib/api/ride";
 import {
   getPendingPorterServices,
   acceptPorterService,
+  getNearbyDriversForPorter,
   type PorterServiceResponse,
 } from "@/lib/api/porter";
 import {
@@ -92,6 +99,7 @@ import autoImage from "@/assets/images/auto.png";
 import bikeImage from "@/assets/images/bike.png";
 import suvImage from "@/assets/images/suv.png";
 import { MapPinCheckInside } from "lucide-react-native";
+import { calculateHeadingBetweenCoordinates } from "@/lib/utils/vehicle-marker-assets";
 
 // Note: Active services now navigate directly to full-screen views instead of modals
 
@@ -101,18 +109,25 @@ const RUPEE = "\u20B9";
 const BULLET = "\u2022";
 const DRIVER_WALLET_NEGATIVE_MESSAGE =
   "Your wallet balance is below 0. Please recharge your wallet to continue getting rides.";
-const PASSENGER_MAP_DEFAULT_REGION = {
-  latitude: 28.6139,
-  longitude: 77.209,
-  latitudeDelta: 0.06,
-  longitudeDelta: 0.06,
-};
+const PASSENGER_MAP_INITIAL_LATITUDE_DELTA = 0.0085;
+const PASSENGER_MAP_INITIAL_LONGITUDE_DELTA = 0.0085;
+const PASSENGER_MAP_BOTTOM_PADDING_RATIO = 0.5;
 const MAX_PASSENGER_MAP_ZOOM_OUT_KM = 40;
 const KM_PER_DEGREE_LATITUDE = 111.32;
 const MAX_PASSENGER_LAT_DELTA =
   MAX_PASSENGER_MAP_ZOOM_OUT_KM / KM_PER_DEGREE_LATITUDE;
 const PENDING_RIDE_REFRESH_DEBOUNCE_MS = 350;
 const DRIVER_STATUS_REFRESH_INTERVAL_MS = 10000;
+const PASSENGER_NEARBY_VEHICLE_POLL_INTERVAL_MS = 7000;
+const PASSENGER_NEARBY_VEHICLE_RADIUS_KM = 3;
+
+type NearbyVehicleMarker = {
+  id: string;
+  latitude: number;
+  longitude: number;
+  vehicleType?: string | null;
+  heading?: number | null;
+};
 
 function getMaxLongitudeDeltaAtLatitude(latitude: number): number {
   const latitudeRadians = (latitude * Math.PI) / 180;
@@ -304,6 +319,12 @@ export default function HomeScreen() {
   const toast = useToast();
   const { showAlert } = useAlert();
   const insets = useSafeAreaInsets();
+  const passengerMapBottomPadding = useMemo(
+    () =>
+      Math.round(Dimensions.get("window").height * PASSENGER_MAP_BOTTOM_PADDING_RATIO) +
+      insets.bottom,
+    [insets.bottom]
+  );
   const [refreshing, setRefreshing] = useState(false);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [isAvailable, setIsAvailable] = useState(true);
@@ -605,7 +626,12 @@ export default function HomeScreen() {
         const serviceStatus = await getDriverServiceStatus();
         if (response.data.isAvailable && walletEligible && !serviceStatus.isRunning) {
           // Service should be running but isn't - try to start it
-          await startDriverService();
+          const started = await startDriverService();
+          if (!started) {
+            console.warn(
+              "[HomeScreen] Driver is online but background tracking is not running."
+            );
+          }
         } else if (
           (!response.data.isAvailable || !walletEligible) &&
           serviceStatus.isRunning &&
@@ -692,7 +718,9 @@ export default function HomeScreen() {
         if (!hasPermission) {
           setIsAvailable(previousAvailability);
           toast.warning(
-            "UK Drive needs background location access to keep you available for rides while the app is minimized."
+            Platform.OS === "ios"
+              ? "Allow Always Location in iPhone Settings to stay online for ride requests in the background."
+              : "UK Drive needs background location access to keep you available for rides while the app is minimized."
           );
           setIsTogglingAvailability(false);
           return;
@@ -703,8 +731,10 @@ export default function HomeScreen() {
         if (!serviceStarted) {
           setIsAvailable(previousAvailability);
           toast.error(
-            "Failed to start location tracking service.",
-            "Please ensure location services are enabled and try again."
+            "Failed to start location tracking.",
+            Platform.OS === "ios"
+              ? "Please verify Location is set to Always and Background App Refresh is enabled."
+              : "Please ensure location services are enabled and try again."
           );
           setIsTogglingAvailability(false);
           return;
@@ -812,27 +842,55 @@ export default function HomeScreen() {
   const passengerSheetSnapPoints = useMemo(() => ["50%", "84%"], []);
   const [passengerLocation, setPassengerLocation] =
     useState<LocationWithAddress | null>(null);
+  const [passengerMapCenter, setPassengerMapCenter] = useState<{
+    latitude: number;
+    longitude: number;
+  } | null>(null);
   const [passengerRecentLocations, setPassengerRecentLocations] = useState<
     RecentLocation[]
   >([]);
+  const [passengerNearbyVehicles, setPassengerNearbyVehicles] = useState<
+    NearbyVehicleMarker[]
+  >([]);
+  const passengerNearbyVehiclePrevRef = useRef<
+    Map<string, { latitude: number; longitude: number }>
+  >(new Map());
   const passengerMapRegion = useMemo(
-    () => ({
-      latitude:
-        passengerLocation?.latitude ?? PASSENGER_MAP_DEFAULT_REGION.latitude,
-      longitude:
-        passengerLocation?.longitude ?? PASSENGER_MAP_DEFAULT_REGION.longitude,
-      latitudeDelta: PASSENGER_MAP_DEFAULT_REGION.latitudeDelta,
-      longitudeDelta: PASSENGER_MAP_DEFAULT_REGION.longitudeDelta,
-    }),
-    [passengerLocation?.latitude, passengerLocation?.longitude]
+    (): Region | null => {
+      const baseCenter =
+        passengerMapCenter ??
+        (passengerLocation
+          ? {
+              latitude: passengerLocation.latitude,
+              longitude: passengerLocation.longitude,
+            }
+          : null);
+
+      if (!baseCenter) return null;
+
+      return {
+        latitude: baseCenter.latitude,
+        longitude: baseCenter.longitude,
+        latitudeDelta: PASSENGER_MAP_INITIAL_LATITUDE_DELTA,
+        longitudeDelta: PASSENGER_MAP_INITIAL_LONGITUDE_DELTA,
+      };
+    },
+    [
+      passengerMapCenter?.latitude,
+      passengerMapCenter?.longitude,
+      passengerLocation?.latitude,
+      passengerLocation?.longitude,
+    ]
   );
+  const passengerReferenceLatitude =
+    passengerMapCenter?.latitude ?? passengerLocation?.latitude ?? 0;
   const passengerMinZoomLevel = useMemo(
     () =>
       getMinZoomLevelForDistanceKm(
         MAX_PASSENGER_MAP_ZOOM_OUT_KM,
-        passengerMapRegion.latitude
+        passengerReferenceLatitude
       ),
-    [passengerMapRegion.latitude]
+    [passengerReferenceLatitude]
   );
   const displayedPassengerRecentLocations = useMemo(
     () => passengerRecentLocations.slice(0, 2),
@@ -866,12 +924,16 @@ export default function HomeScreen() {
     try {
       const loc = await getCurrentPositionWithAddress();
       setPassengerLocation(loc);
+      setPassengerMapCenter({
+        latitude: loc.latitude,
+        longitude: loc.longitude,
+      });
       passengerMapRef.current?.animateToRegion(
         {
           latitude: loc.latitude,
           longitude: loc.longitude,
-          latitudeDelta: PASSENGER_MAP_DEFAULT_REGION.latitudeDelta,
-          longitudeDelta: PASSENGER_MAP_DEFAULT_REGION.longitudeDelta,
+          latitudeDelta: PASSENGER_MAP_INITIAL_LATITUDE_DELTA,
+          longitudeDelta: PASSENGER_MAP_INITIAL_LONGITUDE_DELTA,
         },
         450
       );
@@ -895,12 +957,15 @@ export default function HomeScreen() {
       return;
     }
 
-    const anchor = {
-      latitude:
-        passengerLocation?.latitude ?? PASSENGER_MAP_DEFAULT_REGION.latitude,
-      longitude:
-        passengerLocation?.longitude ?? PASSENGER_MAP_DEFAULT_REGION.longitude,
-    };
+    const anchor = passengerLocation
+      ? {
+          latitude: passengerLocation.latitude,
+          longitude: passengerLocation.longitude,
+        }
+      : passengerMapCenter ?? {
+          latitude: region.latitude,
+          longitude: region.longitude,
+        };
     const clampedRegion = clampPassengerMapRegion(region, anchor);
     const hasExceededZoomOutLimit =
       Math.abs(clampedRegion.latitude - region.latitude) > 0.0001 ||
@@ -912,16 +977,40 @@ export default function HomeScreen() {
       isPassengerMapRegionClamping.current = true;
       passengerMapRef.current?.animateToRegion(clampedRegion, 140);
     }
-  }, [passengerLocation?.latitude, passengerLocation?.longitude]);
+
+    setPassengerMapCenter((previous) => {
+      if (
+        previous &&
+        Math.abs(previous.latitude - clampedRegion.latitude) < 0.0001 &&
+        Math.abs(previous.longitude - clampedRegion.longitude) < 0.0001
+      ) {
+        return previous;
+      }
+      return {
+        latitude: clampedRegion.latitude,
+        longitude: clampedRegion.longitude,
+      };
+    });
+  }, [
+    passengerLocation?.latitude,
+    passengerLocation?.longitude,
+    passengerMapCenter?.latitude,
+    passengerMapCenter?.longitude,
+  ]);
 
   useEffect(() => {
-    if (!isPassenger || !passengerMapRef.current) return;
-    const center = {
-      latitude:
-        passengerLocation?.latitude ?? PASSENGER_MAP_DEFAULT_REGION.latitude,
-      longitude:
-        passengerLocation?.longitude ?? PASSENGER_MAP_DEFAULT_REGION.longitude,
-    };
+    // `setMapBoundaries` is only available on the Android/Google Maps native view.
+    // On iOS the app uses Apple Maps, so we rely on region clamping instead.
+    if (Platform.OS !== "android" || !isPassenger || !passengerMapRef.current) {
+      return;
+    }
+    const center = passengerLocation
+      ? {
+          latitude: passengerLocation.latitude,
+          longitude: passengerLocation.longitude,
+        }
+      : passengerMapCenter;
+    if (!center) return;
     const boundsDistanceKm = MAX_PASSENGER_MAP_ZOOM_OUT_KM;
     const latitudeOffset = getLatitudeDeltaForDistanceKm(boundsDistanceKm);
     const longitudeOffset = getLongitudeDeltaForDistanceKm(
@@ -945,7 +1034,13 @@ export default function HomeScreen() {
     };
 
     mapRef.setMapBoundaries?.(northEast, southWest);
-  }, [isPassenger, passengerLocation?.latitude, passengerLocation?.longitude]);
+  }, [
+    isPassenger,
+    passengerLocation?.latitude,
+    passengerLocation?.longitude,
+    passengerMapCenter?.latitude,
+    passengerMapCenter?.longitude,
+  ]);
 
   useEffect(() => {
     if (!isPassenger) return;
@@ -964,6 +1059,230 @@ export default function HomeScreen() {
       refreshPassengerRecentLocations,
     ])
   );
+
+  useEffect(() => {
+    if (!isPassenger || selectedMode === "carPool") {
+      passengerNearbyVehiclePrevRef.current = new Map();
+      setPassengerNearbyVehicles([]);
+      return;
+    }
+
+    const anchor =
+      passengerMapCenter ??
+      (passengerLocation
+        ? {
+            latitude: passengerLocation.latitude,
+            longitude: passengerLocation.longitude,
+          }
+        : null);
+
+    if (!anchor) {
+      passengerNearbyVehiclePrevRef.current = new Map();
+      setPassengerNearbyVehicles([]);
+      return;
+    }
+
+    let cancelled = false;
+
+    const fetchPassengerNearbyVehicles = async () => {
+      try {
+        const toNum = (
+          value: number | string | null | undefined
+        ): number => {
+          if (typeof value === "number" && !Number.isNaN(value)) return value;
+          if (typeof value === "string") return parseFloat(value);
+          return Number.NaN;
+        };
+
+        const response =
+          selectedMode === "porter"
+            ? await getNearbyDriversForPorter(
+                anchor.latitude,
+                anchor.longitude,
+                undefined,
+                PASSENGER_NEARBY_VEHICLE_RADIUS_KM
+              )
+            : await getNearbyDrivers(
+                anchor.latitude,
+                anchor.longitude,
+                undefined,
+                PASSENGER_NEARBY_VEHICLE_RADIUS_KM
+              );
+
+        if (cancelled || !response.success) return;
+
+        const extractDrivers = (res: {
+          success?: boolean;
+          data?: unknown;
+        }): unknown[] => {
+          if (!res?.success) return [];
+          const payload = res.data as Record<string, unknown> | undefined;
+          if (!payload) return [];
+          const direct = payload.drivers;
+          const nested = (payload.data as Record<string, unknown> | undefined)
+            ?.drivers;
+          const list = nested ?? direct ?? [];
+          return Array.isArray(list) ? list : [];
+        };
+
+        const rawDrivers = extractDrivers(response);
+
+        const previousPositions = passengerNearbyVehiclePrevRef.current;
+        const nextPositions = new Map<
+          string,
+          { latitude: number; longitude: number }
+        >();
+
+        const markers: NearbyVehicleMarker[] = [];
+        for (const rawDriver of rawDrivers) {
+          const driver = rawDriver as {
+            id?: unknown;
+            latitude?: unknown;
+            longitude?: unknown;
+            lat?: unknown;
+            lng?: unknown;
+            location?: {
+              latitude?: unknown;
+              longitude?: unknown;
+              lat?: unknown;
+              lng?: unknown;
+            } | null;
+            coordinate?: {
+              latitude?: unknown;
+              longitude?: unknown;
+              lat?: unknown;
+              lng?: unknown;
+            } | null;
+            heading?: unknown;
+            vehicleType?: unknown;
+            vehicle_type?: unknown;
+            vehicleSubcategorySlug?: unknown;
+            vehicle_subcategory_slug?: unknown;
+            vehicleCategorySlug?: unknown;
+            vehicle_category_slug?: unknown;
+            vehicleCategoryName?: unknown;
+            vehicle_category_name?: unknown;
+            vehicleSubcategory?: { slug?: unknown } | null;
+            vehicle_subcategory?: { slug?: unknown } | null;
+            vehicleCategory?: { slug?: unknown; name?: unknown } | null;
+            vehicle_category?: { slug?: unknown; name?: unknown } | null;
+            slug?: unknown;
+          };
+
+          const latCandidates = [
+            driver.latitude,
+            driver.lat,
+            driver.location?.latitude,
+            driver.location?.lat,
+            driver.coordinate?.latitude,
+            driver.coordinate?.lat,
+          ];
+
+          const lngCandidates = [
+            driver.longitude,
+            driver.lng,
+            driver.location?.longitude,
+            driver.location?.lng,
+            driver.coordinate?.longitude,
+            driver.coordinate?.lng,
+          ];
+
+          const latitude =
+            latCandidates
+              .map((value) =>
+                toNum(value as number | string | null | undefined)
+              )
+              .find((value) => Number.isFinite(value)) ?? Number.NaN;
+          const longitude =
+            lngCandidates
+              .map((value) =>
+                toNum(value as number | string | null | undefined)
+              )
+              .find((value) => Number.isFinite(value)) ?? Number.NaN;
+
+          if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+            continue;
+          }
+
+          const idRaw = driver.id;
+          const id =
+            typeof idRaw === "string" && idRaw.trim().length > 0
+              ? idRaw
+              : `${latitude}:${longitude}`;
+
+          const previous = previousPositions.get(id);
+          const rawHeading = toNum(
+            driver.heading as number | string | null | undefined
+          );
+          const heading =
+            Number.isFinite(rawHeading) && rawHeading >= 0
+              ? rawHeading
+              : previous
+              ? calculateHeadingBetweenCoordinates(previous, {
+                  latitude,
+                  longitude,
+                })
+              : null;
+
+          nextPositions.set(id, { latitude, longitude });
+
+          const resolvedVehicleType = [
+            driver.vehicleCategorySlug,
+            driver.vehicle_category_slug,
+            driver.vehicleCategory?.slug,
+            driver.vehicle_category?.slug,
+            driver.vehicleCategoryName,
+            driver.vehicle_category_name,
+            driver.vehicleCategory?.name,
+            driver.vehicle_category?.name,
+            driver.vehicleType,
+            driver.vehicle_type,
+            driver.vehicleSubcategorySlug,
+            driver.vehicle_subcategory_slug,
+            driver.vehicleSubcategory?.slug,
+            driver.vehicle_subcategory?.slug,
+            driver.slug,
+          ].find(
+            (value): value is string =>
+              typeof value === "string" && value.trim().length > 0
+          );
+
+          markers.push({
+            id,
+            latitude,
+            longitude,
+            heading,
+            vehicleType: resolvedVehicleType ?? null,
+          });
+        }
+
+        passengerNearbyVehiclePrevRef.current = nextPositions;
+        setPassengerNearbyVehicles(markers);
+      } catch (error) {
+        if (!cancelled) {
+          console.warn("[Home] Failed to fetch nearby vehicles:", error);
+        }
+      }
+    };
+
+    void fetchPassengerNearbyVehicles();
+    const interval = setInterval(
+      fetchPassengerNearbyVehicles,
+      PASSENGER_NEARBY_VEHICLE_POLL_INTERVAL_MS
+    );
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [
+    isPassenger,
+    selectedMode,
+    passengerLocation?.latitude,
+    passengerLocation?.longitude,
+    passengerMapCenter?.latitude,
+    passengerMapCenter?.longitude,
+  ]);
 
   const clearPendingRideRefreshTimeout = useCallback(() => {
     if (pendingRideRefreshTimeoutRef.current) {
@@ -1318,12 +1637,18 @@ export default function HomeScreen() {
       <View style={{ flex: 1, backgroundColor: "#000" }}>
         <StatusBar style="dark" translucent backgroundColor="transparent" />
         <View style={{ flex: 1, backgroundColor: "#fff" }}>
-          {canRenderAndroidMap ? (
+          {canRenderAndroidMap && passengerMapRegion ? (
             <MapView
               ref={passengerMapRef}
               provider={Platform.OS === "android" ? PROVIDER_GOOGLE : undefined}
               customMapStyle={Platform.OS === "android" ? MAP_STYLE : undefined}
               style={{ position: "absolute", top: 0, right: 0, bottom: 0, left: 0 }}
+              mapPadding={{
+                top: 0,
+                right: 0,
+                bottom: passengerMapBottomPadding,
+                left: 0,
+              }}
               initialRegion={passengerMapRegion}
               onRegionChangeComplete={handlePassengerMapRegionChangeComplete}
               minZoomLevel={passengerMinZoomLevel}
@@ -1335,13 +1660,58 @@ export default function HomeScreen() {
             >
               <Marker
                 coordinate={{
-                  latitude: passengerMapRegion.latitude,
-                  longitude: passengerMapRegion.longitude,
+                  latitude:
+                    passengerLocation?.latitude ??
+                    passengerMapCenter?.latitude ??
+                    passengerMapRegion.latitude,
+                  longitude:
+                    passengerLocation?.longitude ??
+                    passengerMapCenter?.longitude ??
+                    passengerMapRegion.longitude,
                 }}
               >
                 <Ionicons name="location" size={30} color={BRAND_ORANGE} />
               </Marker>
+              {passengerNearbyVehicles.map((vehicle) => (
+                <DriverMarker
+                  key={`home-nearby-${vehicle.id}`}
+                  coordinate={{
+                    latitude: vehicle.latitude,
+                    longitude: vehicle.longitude,
+                  }}
+                  title="Nearby vehicle"
+                  vehicleType={vehicle.vehicleType ?? undefined}
+                  heading={vehicle.heading ?? null}
+                />
+              ))}
             </MapView>
+          ) : canRenderAndroidMap ? (
+            <View
+              style={{
+                position: "absolute",
+                top: 0,
+                right: 0,
+                bottom: 0,
+                left: 0,
+                backgroundColor: "#F3F4F6",
+                alignItems: "center",
+                justifyContent: "center",
+                paddingHorizontal: 24,
+              }}
+            >
+              <ActivityIndicator size="small" color={BRAND_ORANGE} />
+              <Text
+                style={{
+                  marginTop: 10,
+                  fontFamily: "Figtree_600SemiBold",
+                  fontSize: 14,
+                  color: "#374151",
+                  textAlign: "center",
+                }}
+              >
+                Fetching your current location...
+              </Text>
+            </View>
           ) : (
             <View
               style={{

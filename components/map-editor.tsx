@@ -16,7 +16,7 @@ import { View, TouchableOpacity, Modal, ActivityIndicator, Dimensions, StyleShee
 import { SafeAreaView } from "react-native-safe-area-context";
 import MapView, { Marker, PROVIDER_GOOGLE, Region } from "react-native-maps";
 import { Ionicons } from "@expo/vector-icons";
-import { reverseGeocode } from "@/lib/services/location";
+import { getCurrentPositionWithAddress, reverseGeocode } from "@/lib/services/location";
 import { MAP_STYLE } from "@/constants/map-style";
 import type { LocationWithAddress } from "@/lib/utils/location";
 
@@ -228,6 +228,8 @@ export function MapEditor({
   // IMPORTANT: Only run on `visible` change, NOT on prop changes
   // This prevents resetting state when parent updates locations
   useEffect(() => {
+    let cancelled = false;
+
     if (visible && !hasInitializedRef.current) {
       hasInitializedRef.current = true;
 
@@ -304,8 +306,9 @@ export function MapEditor({
         }, 100);
       } else {
         // Single location editing
-        setCurrentLocation(initialLocation ?? null);
-        setCurrentAddress(initialLocation?.address || "");
+        const singleInitialLocation = initialLocation ?? otherLocation ?? null;
+        setCurrentLocation(singleInitialLocation);
+        setCurrentAddress(singleInitialLocation?.address || "");
 
         // Update both ref and state for editing type
         currentEditingTypeRef.current = locationType;
@@ -313,20 +316,43 @@ export function MapEditor({
 
         // Center map on the location being edited
         setTimeout(() => {
-          if (initialLocation && mapRef.current) {
+          if (singleInitialLocation && mapRef.current) {
             // Set flag to prevent geocoding during initial animation
             isAnimatingRef.current = true;
 
             mapRef.current.animateToRegion(
               {
-                latitude: initialLocation.latitude,
-                longitude: initialLocation.longitude,
+                latitude: singleInitialLocation.latitude,
+                longitude: singleInitialLocation.longitude,
                 latitudeDelta: LATITUDE_DELTA,
                 longitudeDelta: LONGITUDE_DELTA,
               },
               500
             );
+            return;
           }
+
+          // No default coordinates: use current device location when available.
+          getCurrentPositionWithAddress()
+            .then((loc) => {
+              if (cancelled) return;
+              setCurrentLocation(loc);
+              setCurrentAddress(loc.address || "");
+              if (!mapRef.current) return;
+              isAnimatingRef.current = true;
+              mapRef.current.animateToRegion(
+                {
+                  latitude: loc.latitude,
+                  longitude: loc.longitude,
+                  latitudeDelta: LATITUDE_DELTA,
+                  longitudeDelta: LONGITUDE_DELTA,
+                },
+                500
+              );
+            })
+            .catch((error) => {
+              console.warn("[MapEditor] Failed to fetch current location:", error);
+            });
         }, 100);
       }
     }
@@ -338,6 +364,7 @@ export function MapEditor({
 
     // Cleanup timeout on unmount or when modal closes
     return () => {
+      cancelled = true;
       if (geocodeTimeoutRef.current) {
         clearTimeout(geocodeTimeoutRef.current);
       }
@@ -372,8 +399,8 @@ export function MapEditor({
       };
     }
 
-    if (currentLocation || initialLocation) {
-      const loc = currentLocation || initialLocation;
+    if (currentLocation || initialLocation || otherLocation) {
+      const loc = currentLocation || initialLocation || otherLocation;
       return {
         latitude: loc!.latitude,
         longitude: loc!.longitude,
@@ -382,16 +409,11 @@ export function MapEditor({
       };
     }
 
-    // Default to Delhi
-    return {
-      latitude: 28.6139,
-      longitude: 77.209,
-      latitudeDelta: LATITUDE_DELTA,
-      longitudeDelta: LONGITUDE_DELTA,
-    };
+    return null;
   }, [
     currentLocation,
     initialLocation,
+    otherLocation,
     allowBothEditing,
     pickupLocation,
     destinationLocation,
@@ -410,7 +432,7 @@ export function MapEditor({
       onClose();
     } else {
       // Single location editing
-      const loc = currentLocation || initialLocation;
+      const loc = currentLocation || initialLocation || otherLocation;
       if (loc) {
         onConfirm(loc);
         onClose();
@@ -482,6 +504,9 @@ export function MapEditor({
     }
     return currentLocation;
   };
+  const hasSingleLocationForConfirm = Boolean(
+    getCurrentEditingLocationValue() || initialLocation || otherLocation
+  );
 
   return (
     <Modal
@@ -627,59 +652,84 @@ export function MapEditor({
 
         {/* Map */}
         <View className="flex-1 relative">
-          <MapView
-            ref={mapRef}
-            style={StyleSheet.absoluteFillObject}
-            provider={Platform.OS === "android" ? PROVIDER_GOOGLE : undefined}
-            customMapStyle={Platform.OS === "android" ? MAP_STYLE : undefined}
-            initialRegion={mapRegion}
-            showsUserLocation={false}
-            showsMyLocationButton={false}
-            showsCompass={false}
-            scrollEnabled={true}
-            zoomEnabled={true}
-            rotateEnabled={true}
-            pitchEnabled={false}
-            onRegionChange={handleRegionChange}
-            onRegionChangeComplete={handleRegionChangeComplete}
-          >
-            {/* Show other location as a non-interactive marker for context */}
-            {!allowBothEditing && otherLocation && (
-              <Marker
-                coordinate={otherLocation}
-                title={
-                  locationType === "pickup" ? "Destination" : "Pickup Location"
-                }
-                pinColor={locationType === "pickup" ? "#EF4444" : "#10B981"}
-                draggable={false}
-              />
-            )}
+          {mapRegion ? (
+            <MapView
+              ref={mapRef}
+              style={StyleSheet.absoluteFillObject}
+              provider={Platform.OS === "android" ? PROVIDER_GOOGLE : undefined}
+              customMapStyle={Platform.OS === "android" ? MAP_STYLE : undefined}
+              initialRegion={mapRegion}
+              showsUserLocation={false}
+              showsMyLocationButton={false}
+              showsCompass={false}
+              scrollEnabled={true}
+              zoomEnabled={true}
+              rotateEnabled={true}
+              pitchEnabled={false}
+              onRegionChange={handleRegionChange}
+              onRegionChangeComplete={handleRegionChangeComplete}
+            >
+              {/* Show other location as a non-interactive marker for context */}
+              {!allowBothEditing && otherLocation && (
+                <Marker
+                  coordinate={otherLocation}
+                  title={
+                    locationType === "pickup" ? "Destination" : "Pickup Location"
+                  }
+                  pinColor={locationType === "pickup" ? "#EF4444" : "#10B981"}
+                  draggable={false}
+                />
+              )}
 
-            {/* Show both locations as markers when editing both */}
-            {allowBothEditing && (
-              <>
-                {pickupLocation && currentEditingType !== "pickup" && (
-                  <Marker
-                    coordinate={pickupLocation}
-                    title="Pickup Location"
-                    pinColor="#10B981"
-                    draggable={false}
-                    opacity={0.5}
-                  />
-                )}
-                {destinationLocation &&
-                  currentEditingType !== "destination" && (
+              {/* Show both locations as markers when editing both */}
+              {allowBothEditing && (
+                <>
+                  {pickupLocation && currentEditingType !== "pickup" && (
                     <Marker
-                      coordinate={destinationLocation}
-                      title="Destination"
-                      pinColor="#EF4444"
+                      coordinate={pickupLocation}
+                      title="Pickup Location"
+                      pinColor="#10B981"
                       draggable={false}
                       opacity={0.5}
                     />
                   )}
-              </>
-            )}
-          </MapView>
+                  {destinationLocation &&
+                    currentEditingType !== "destination" && (
+                      <Marker
+                        coordinate={destinationLocation}
+                        title="Destination"
+                        pinColor="#EF4444"
+                        draggable={false}
+                        opacity={0.5}
+                      />
+                    )}
+                </>
+              )}
+            </MapView>
+          ) : (
+            <View
+              style={[
+                StyleSheet.absoluteFillObject,
+                {
+                  alignItems: "center",
+                  justifyContent: "center",
+                  backgroundColor: "#F3F4F6",
+                },
+              ]}
+            >
+              <ActivityIndicator size="small" color={BRAND_ORANGE} />
+              <Text
+                style={{
+                  marginTop: 10,
+                  fontSize: 14,
+                  color: "#374151",
+                  fontFamily: "Figtree_600SemiBold",
+                }}
+              >
+                Fetching your current location...
+              </Text>
+            </View>
+          )}
 
           {/* Fixed Center Pointer with pulse animation effect */}
           <View
@@ -983,7 +1033,7 @@ export function MapEditor({
                 disabled={
                   allowBothEditing
                     ? !pickupLocation || !destinationLocation
-                    : !getCurrentEditingLocationValue() && !initialLocation
+                    : !hasSingleLocationForConfirm
                 }
                 style={{
                   flex: 1,
@@ -993,14 +1043,14 @@ export function MapEditor({
                   backgroundColor: (
                     allowBothEditing
                       ? pickupLocation && destinationLocation
-                      : getCurrentEditingLocationValue() || initialLocation
+                      : hasSingleLocationForConfirm
                   )
                     ? BRAND_ORANGE
                     : "#9CA3AF",
                   opacity: (
                     allowBothEditing
                       ? pickupLocation && destinationLocation
-                      : getCurrentEditingLocationValue() || initialLocation
+                      : hasSingleLocationForConfirm
                   )
                     ? 1
                     : 0.6,

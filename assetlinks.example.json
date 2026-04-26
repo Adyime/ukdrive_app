@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.wnapp.id1755261066753",
+      "sha256_cert_fingerprints": [
+        "61:4A:17:BB:BB:F7:BA:15:61:BA:B0:BE:9A:7C:D8:F0:36:EB:6B:B8:AF:3C:D4:61:B4:2A:73:EC:73:85:5D:F1"
+      ]
+    }
+  }
+]

@@ -10,7 +10,7 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { LocalizedTextInput as TextInput } from "@/components/localized-text-input";
 import { LocalizedText as Text } from "@/components/localized-text";
 import {
-  View, TouchableOpacity, ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView } from "react-native";
+  View, TouchableOpacity, ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView, AppState } from "react-native";
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -59,11 +59,14 @@ export default function WalletTopupScreen() {
   const [amount, setAmount] = useState<string>('');
   const [state, setState] = useState<TopupState>('input');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [showIosResumeHint, setShowIosResumeHint] = useState(false);
 
   // Polling refs
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const pollAttemptsRef = useRef<number>(0);
   const currentOrderIdRef = useRef<string | null>(null);
+  const appStateRef = useRef(AppState.currentState);
+  const leftAppDuringCheckoutRef = useRef(false);
 
   // Parse amount
   const numericAmount = parseFloat(amount) || 0;
@@ -77,6 +80,41 @@ export default function WalletTopupScreen() {
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (state !== 'checkout') {
+      leftAppDuringCheckoutRef.current = false;
+      setShowIosResumeHint(false);
+    }
+  }, [state]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'ios') return;
+
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      const previousState = appStateRef.current;
+      appStateRef.current = nextState;
+
+      if (state !== 'checkout') {
+        leftAppDuringCheckoutRef.current = false;
+        return;
+      }
+
+      if (
+        previousState === 'active' &&
+        (nextState === 'inactive' || nextState === 'background')
+      ) {
+        leftAppDuringCheckoutRef.current = true;
+        return;
+      }
+
+      if (leftAppDuringCheckoutRef.current && nextState === 'active') {
+        setShowIosResumeHint(true);
+      }
+    });
+
+    return () => subscription.remove();
+  }, [state]);
 
   /**
    * Handle quick amount selection
@@ -171,6 +209,7 @@ export default function WalletTopupScreen() {
     }
 
     setErrorMessage(null);
+    setShowIosResumeHint(false);
     setState('creating');
 
     try {
@@ -400,6 +439,13 @@ export default function WalletTopupScreen() {
       <Text style={{ marginTop: 8, fontSize: 14, textAlign: 'center', fontFamily: 'Figtree_400Regular', color: '#6B7280' }}>
         {state === 'polling' && 'Please wait while we confirm your payment'}
       </Text>
+      {state === 'checkout' && Platform.OS === 'ios' && (
+        <Text style={{ marginTop: 8, fontSize: 13, textAlign: 'center', fontFamily: 'Figtree_400Regular', color: '#6B7280' }}>
+          {showIosResumeHint
+            ? 'Returned from checkout. If payment did not finish, go back and retry.'
+            : 'If checkout opens in another screen, return to UK Drive to continue verification.'}
+        </Text>
+      )}
     </View>
   );
 

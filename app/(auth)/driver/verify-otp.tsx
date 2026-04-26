@@ -8,13 +8,19 @@ import { LocalizedText as Text } from "@/components/localized-text";
 import { OtpInput } from "@/components/ui/otp-input";
 import { useToast } from "@/components/ui/toast";
 import { useAuth } from "@/context/auth-context";
+import { useAlert } from "@/context/alert-context";
 import { useLanguage } from "@/context/language-context";
 import { sendOtp, verifyOtp } from "@/lib/api/auth";
 import { saveDriverOnboardingContext } from "@/lib/storage";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 import {
-  KeyboardAvoidingView, Platform, ScrollView, TouchableOpacity, View } from "react-native";
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  TouchableOpacity,
+  View,
+} from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
 const BRAND_ORANGE = "#F36D14";
@@ -25,6 +31,7 @@ export default function DriverVerifyOtpScreen() {
   const insets = useSafeAreaInsets();
   const { phone } = useLocalSearchParams<{ phone: string }>();
   const { login } = useAuth();
+  const { showAlert } = useAlert();
   const { t } = useLanguage();
   const toast = useToast();
   const [error, setError] = useState("");
@@ -53,17 +60,45 @@ export default function DriverVerifyOtpScreen() {
     return () => clearInterval(t);
   }, [resendCooldown]);
 
-  const handleVerifyOtp = async (otpCode: string) => {
+  const handleVerifyOtp = async (
+    otpCode: string,
+    options?: { forceLogin?: boolean; sessionTakeoverToken?: string }
+  ) => {
     if (!phone) return;
 
     setError("");
     setLoading(true);
 
     try {
-      const response = await verifyOtp(phone, otpCode, "driver");
+      const response = await verifyOtp(phone, otpCode, "driver", options);
 
       if (response.success && response.data) {
         const { data } = response;
+
+        if (data.requiresSessionTakeover && data.sessionTakeoverToken) {
+          showAlert(
+            "Continue Login?",
+            "This number is already logged in on another device. Continue and logout old device?",
+            [
+              {
+                text: "Cancel",
+                style: "cancel",
+                onPress: () => router.replace("/(auth)"),
+              },
+              {
+                text: "Continue",
+                onPress: () => {
+                  void handleVerifyOtp(otpCode, {
+                    forceLogin: true,
+                    sessionTakeoverToken: data.sessionTakeoverToken,
+                  });
+                },
+              },
+            ],
+            { brandColorOverride: BRAND_PURPLE }
+          );
+          return;
+        }
 
         if (data.verified) {
           if (
@@ -86,7 +121,10 @@ export default function DriverVerifyOtpScreen() {
             await login(data.tokens, data.user as any, "driver");
             router.replace("/(tabs)");
           }
+          return;
         }
+
+        setError(t("Invalid OTP. Please try again."));
       } else {
         const errorMessage =
           typeof response.error === "object" &&

@@ -330,20 +330,16 @@ export default function CreatePorterScreen() {
         longitudeDelta: Math.max((maxLng - minLng) * 1.5, LONGITUDE_DELTA),
       };
     }
-    if (currentLocation) {
+    const anchor = pickupCoords ?? deliveryCoords ?? currentLocation;
+    if (anchor) {
       return {
-        latitude: currentLocation.latitude,
-        longitude: currentLocation.longitude,
+        latitude: anchor.latitude,
+        longitude: anchor.longitude,
         latitudeDelta: LATITUDE_DELTA,
         longitudeDelta: LONGITUDE_DELTA,
       };
     }
-    return {
-      latitude: 28.6139,
-      longitude: 77.209,
-      latitudeDelta: LATITUDE_DELTA,
-      longitudeDelta: LONGITUDE_DELTA,
-    };
+    return null;
   }, [
     pickupCoords?.latitude,
     pickupCoords?.longitude,
@@ -423,6 +419,12 @@ export default function CreatePorterScreen() {
         currentLocation.longitude,
         currentLocation.address
       ).catch(() => {});
+      mapRef.current?.animateToRegion({
+        latitude: currentLocation.latitude,
+        longitude: currentLocation.longitude,
+        latitudeDelta: LATITUDE_DELTA,
+        longitudeDelta: LONGITUDE_DELTA,
+      });
     }
   }, [currentLocation, pickupCoords, userType]);
 
@@ -1174,76 +1176,101 @@ export default function CreatePorterScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: "#1a1a2e" }}>
       {/* Full-screen map */}
-      <MapView
-        ref={mapRef}
-        style={StyleSheet.absoluteFillObject}
-        provider={Platform.OS === "android" ? PROVIDER_GOOGLE : undefined}
-        customMapStyle={Platform.OS === "android" ? MAP_STYLE : undefined}
-        initialRegion={mapRegion}
-        showsUserLocation={false}
-        showsMyLocationButton={false}
-        onMarkerPress={() => {
-          ignoreNextMapPressRef.current = true;
-          setTimeout(() => {
-            ignoreNextMapPressRef.current = false;
-          }, 0);
-        }}
-        onPress={handleMapPress}
-      >
-        {pickupCoords && (
-          <PickupMarker
-            key="pickup-marker"
-            coordinate={pickupCoords}
-            title="Pickup"
-            onPress={() => {
-              setEditingLocationType("pickup");
-              setShowMapEditor(true);
+      {mapRegion ? (
+        <MapView
+          ref={mapRef}
+          style={StyleSheet.absoluteFillObject}
+          provider={Platform.OS === "android" ? PROVIDER_GOOGLE : undefined}
+          customMapStyle={Platform.OS === "android" ? MAP_STYLE : undefined}
+          initialRegion={mapRegion}
+          showsUserLocation={false}
+          showsMyLocationButton={false}
+          onMarkerPress={() => {
+            ignoreNextMapPressRef.current = true;
+            setTimeout(() => {
+              ignoreNextMapPressRef.current = false;
+            }, 0);
+          }}
+          onPress={handleMapPress}
+        >
+          {pickupCoords && (
+            <PickupMarker
+              key="pickup-marker"
+              coordinate={pickupCoords}
+              title="Pickup"
+              onPress={() => {
+                setEditingLocationType("pickup");
+                setShowMapEditor(true);
+              }}
+            />
+          )}
+          {deliveryCoords && (
+            <DestinationMarker
+              key="delivery-marker"
+              coordinate={deliveryCoords}
+              title="Delivery"
+              onPress={() => {
+                setEditingLocationType("delivery");
+                setShowMapEditor(true);
+              }}
+            />
+          )}
+          {routeCoordinates.length > 0 && !routeLoading && (
+            <Polyline
+              coordinates={routeCoordinates}
+              strokeColor={ROUTE_COLORS.shadow}
+              strokeWidth={8}
+              lineCap="round"
+              lineJoin="round"
+            />
+          )}
+          {routeCoordinates.length > 0 && (
+            <Polyline
+              coordinates={routeCoordinates}
+              strokeColor={ROUTE_COLORS.primary}
+              strokeWidth={5}
+              lineCap="round"
+              lineJoin="round"
+              lineDashPattern={routeLoading ? [5, 5] : undefined}
+            />
+          )}
+          {nearbyVehicles.map((vehicle) => (
+            <DriverMarker
+              key={vehicle.id}
+              coordinate={{
+                latitude: vehicle.latitude,
+                longitude: vehicle.longitude,
+              }}
+              title="Nearby vehicle"
+              vehicleType={vehicle.vehicleType}
+              heading={vehicle.heading ?? null}
+            />
+          ))}
+        </MapView>
+      ) : (
+        <View
+          style={[
+            StyleSheet.absoluteFillObject,
+            {
+              alignItems: "center",
+              justifyContent: "center",
+              backgroundColor: "#F3F4F6",
+            },
+          ]}
+        >
+          <ActivityIndicator size="small" color={BRAND_ORANGE} />
+          <Text
+            style={{
+              marginTop: 10,
+              color: "#374151",
+              fontFamily: "Figtree_600SemiBold",
+              fontSize: 14,
             }}
-          />
-        )}
-        {deliveryCoords && (
-          <DestinationMarker
-            key="delivery-marker"
-            coordinate={deliveryCoords}
-            title="Delivery"
-            onPress={() => {
-              setEditingLocationType("delivery");
-              setShowMapEditor(true);
-            }}
-          />
-        )}
-        {routeCoordinates.length > 0 && !routeLoading && (
-          <Polyline
-            coordinates={routeCoordinates}
-            strokeColor={ROUTE_COLORS.shadow}
-            strokeWidth={8}
-            lineCap="round"
-            lineJoin="round"
-          />
-        )}
-        {routeCoordinates.length > 0 && (
-          <Polyline
-            coordinates={routeCoordinates}
-            strokeColor={ROUTE_COLORS.primary}
-            strokeWidth={5}
-            lineCap="round"
-            lineJoin="round"
-            lineDashPattern={routeLoading ? [5, 5] : undefined}
-          />
-        )}
-        {nearbyVehicles.map((vehicle) => (
-          <DriverMarker
-            key={vehicle.id}
-            coordinate={{
-              latitude: vehicle.latitude,
-              longitude: vehicle.longitude,
-            }}
-            title="Nearby vehicle"
-            vehicleType={vehicle.vehicleType}
-            heading={vehicle.heading ?? null}
-          />
-        ))}
-      </MapView>
+          >
+            Fetching your current location...
+          </Text>
+        </View>
+      )}
 
       {/* Loading route: hidden for passengers (driver-only UI) */}
 
