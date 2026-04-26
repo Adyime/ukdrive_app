@@ -139,11 +139,21 @@ export async function registerPassenger(
  */
 export async function onboardDriver(
   data: DriverOnboardingData,
-  onboardingToken: string
+  onboardingToken: string,
+  options?: {
+    forceLogin?: boolean;
+    sessionTakeoverToken?: string;
+  }
 ): Promise<{ success: boolean; data?: unknown; error?: unknown }> {
   return post(
     '/api/auth/driver/onboarding',
-    data,
+    {
+      ...data,
+      ...(options?.forceLogin ? { forceLogin: true } : {}),
+      ...(options?.sessionTakeoverToken
+        ? { sessionTakeoverToken: options.sessionTakeoverToken }
+        : {}),
+    },
     {
       'X-Onboarding-Token': onboardingToken,
     } as HeadersInit

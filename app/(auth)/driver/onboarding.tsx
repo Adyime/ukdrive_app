@@ -13,6 +13,7 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 import { Input } from "@/components/ui/input";
 import { Loading } from "@/components/ui/loading";
 import { ImagePickerComponent } from "@/components/ui/image-picker";
+import { useAlert } from "@/context/alert-context";
 import { onboardDriver, type GenderOption } from "@/lib/api/auth";
 import { uploadDocumentImage } from "@/lib/api/storage";
 import { getVehicleOptions, type VehiclePurpose } from "@/lib/api/vehicle-options";
@@ -39,6 +40,7 @@ export default function DriverOnboardingScreen() {
     onboardingToken?: string;
   }>();
   const { login } = useAuth();
+  const { showAlert } = useAlert();
   // Use state so we can hydrate from storage when params missing (e.g. after refresh)
   const [phone, setPhone] = useState(params.phone ?? "");
   const [onboardingToken, setOnboardingToken] = useState(
@@ -377,7 +379,10 @@ export default function DriverOnboardingScreen() {
     else if (step === 3) setStep(2);
   };
 
-  const handleSubmit = async () => {
+  const handleSubmit = async (options?: {
+    forceLogin?: boolean;
+    sessionTakeoverToken?: string;
+  }) => {
     if (!phone || !onboardingToken) return;
 
     if (!validateForm()) {
@@ -455,10 +460,43 @@ export default function DriverOnboardingScreen() {
         });
       }
 
-      const response = await onboardDriver(requestData, onboardingToken);
+      const response = await onboardDriver(requestData, onboardingToken, options);
 
       if (response.success && response.data) {
-        const data = response.data as any;
+        const data = response.data as {
+          tokens?: { accessToken: string; refreshToken: string };
+          user?: any;
+          requiresSessionTakeover?: boolean;
+          sessionTakeoverToken?: string;
+        };
+
+        if (
+          data.requiresSessionTakeover &&
+          data.sessionTakeoverToken &&
+          !options?.forceLogin
+        ) {
+          showAlert(
+            "Continue Login?",
+            "This number is already logged in on another device. Continue and logout old device?",
+            [
+              {
+                text: "Cancel",
+                style: "cancel",
+              },
+              {
+                text: "Continue",
+                onPress: () => {
+                  void handleSubmit({
+                    forceLogin: true,
+                    sessionTakeoverToken: data.sessionTakeoverToken,
+                  });
+                },
+              },
+            ],
+            { brandColorOverride: BRAND_PURPLE }
+          );
+          return;
+        }
 
         if (data.tokens && data.user) {
           await clearDriverOnboardingContext();
@@ -466,6 +504,57 @@ export default function DriverOnboardingScreen() {
           router.replace("/(tabs)");
         }
       } else {
+        const takeoverError =
+          response.error &&
+          typeof response.error === "object"
+            ? (response.error as {
+                code?: string;
+                message?: string;
+                requiresSessionTakeover?: boolean;
+                sessionTakeoverToken?: string;
+                details?: unknown;
+              })
+            : undefined;
+        const takeoverDetails =
+          takeoverError?.details && typeof takeoverError.details === "object"
+            ? (takeoverError.details as {
+                requiresSessionTakeover?: boolean;
+                sessionTakeoverToken?: string;
+              })
+            : undefined;
+        const sessionTakeoverToken =
+          takeoverError?.sessionTakeoverToken ??
+          takeoverDetails?.sessionTakeoverToken;
+        const requiresSessionTakeover =
+          (takeoverError?.requiresSessionTakeover === true ||
+            takeoverDetails?.requiresSessionTakeover === true ||
+            takeoverError?.code === "SESSION_TAKEOVER_REQUIRED") &&
+          !!sessionTakeoverToken;
+
+        if (requiresSessionTakeover && !options?.forceLogin) {
+          showAlert(
+            "Continue Login?",
+            "This number is already logged in on another device. Continue and logout old device?",
+            [
+              {
+                text: "Cancel",
+                style: "cancel",
+              },
+              {
+                text: "Continue",
+                onPress: () => {
+                  void handleSubmit({
+                    forceLogin: true,
+                    sessionTakeoverToken,
+                  });
+                },
+              },
+            ],
+            { brandColorOverride: BRAND_PURPLE }
+          );
+          return;
+        }
+
         // Session expired: redirect to login immediately so user can verify phone again
         const err = response.error as
           | { code?: string; message?: string }
@@ -1266,7 +1355,9 @@ export default function DriverOnboardingScreen() {
                     </Text>
                   </TouchableOpacity>
                   <TouchableOpacity
-                    onPress={handleSubmit}
+                    onPress={() => {
+                      void handleSubmit();
+                    }}
                     disabled={
                       loading ||
                       uploadingLicenseFront ||
