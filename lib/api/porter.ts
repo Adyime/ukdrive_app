@@ -111,6 +111,7 @@ export interface NearbyDriver {
   id: string;
   fullName: string;
   phone: string;
+  markerCategory?: "bike" | "auto" | "car";
   vehicleType?: string | null;
   vehicleSubcategorySlug?: string;
   vehicleCategorySlug?: string;

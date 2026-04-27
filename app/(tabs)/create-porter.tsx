@@ -634,6 +634,15 @@ export default function CreatePorterScreen() {
 
           const parsedHeading = toNum(d.heading);
           const resolvedVehicleType = [
+            (d as { markerCategory?: unknown }).markerCategory,
+            (d as { marker_category?: unknown }).marker_category,
+            (d as { vehicleSubcategorySlug?: unknown }).vehicleSubcategorySlug,
+            (d as { vehicle_subcategory_slug?: unknown }).vehicle_subcategory_slug,
+            (d as { slug?: unknown }).slug,
+            (d as { vehicleSubcategory?: { slug?: unknown } }).vehicleSubcategory
+              ?.slug,
+            (d as { vehicle_subcategory?: { slug?: unknown } }).vehicle_subcategory
+              ?.slug,
             d.vehicleType,
             d.vehicle_type,
             (d as { vehicleCategorySlug?: unknown }).vehicleCategorySlug,
@@ -644,13 +653,6 @@ export default function CreatePorterScreen() {
             (d as { vehicle_category_name?: unknown }).vehicle_category_name,
             (d as { vehicleCategory?: { name?: unknown } }).vehicleCategory?.name,
             (d as { vehicle_category?: { name?: unknown } }).vehicle_category?.name,
-            (d as { vehicleSubcategorySlug?: unknown }).vehicleSubcategorySlug,
-            (d as { vehicle_subcategory_slug?: unknown }).vehicle_subcategory_slug,
-            (d as { slug?: unknown }).slug,
-            (d as { vehicleSubcategory?: { slug?: unknown } }).vehicleSubcategory
-              ?.slug,
-            (d as { vehicle_subcategory?: { slug?: unknown } }).vehicle_subcategory
-              ?.slug,
           ].find(
             (value): value is string =>
               typeof value === "string" && value.trim().length > 0

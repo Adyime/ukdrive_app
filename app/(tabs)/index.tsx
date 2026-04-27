@@ -1154,6 +1154,8 @@ export default function HomeScreen() {
               lng?: unknown;
             } | null;
             heading?: unknown;
+            markerCategory?: unknown;
+            marker_category?: unknown;
             vehicleType?: unknown;
             vehicle_type?: unknown;
             vehicleSubcategorySlug?: unknown;
@@ -1227,6 +1229,15 @@ export default function HomeScreen() {
           nextPositions.set(id, { latitude, longitude });
 
           const resolvedVehicleType = [
+            driver.markerCategory,
+            driver.marker_category,
+            driver.vehicleSubcategorySlug,
+            driver.vehicle_subcategory_slug,
+            driver.vehicleSubcategory?.slug,
+            driver.vehicle_subcategory?.slug,
+            driver.slug,
+            driver.vehicleType,
+            driver.vehicle_type,
             driver.vehicleCategorySlug,
             driver.vehicle_category_slug,
             driver.vehicleCategory?.slug,
@@ -1235,13 +1246,6 @@ export default function HomeScreen() {
             driver.vehicle_category_name,
             driver.vehicleCategory?.name,
             driver.vehicle_category?.name,
-            driver.vehicleType,
-            driver.vehicle_type,
-            driver.vehicleSubcategorySlug,
-            driver.vehicle_subcategory_slug,
-            driver.vehicleSubcategory?.slug,
-            driver.vehicle_subcategory?.slug,
-            driver.slug,
           ].find(
             (value): value is string =>
               typeof value === "string" && value.trim().length > 0
