@@ -18,7 +18,7 @@
     },
     "android": {
       "package": "com.wnapp.id1755261066753",
-      "versionCode": 66,
+      "versionCode": 68,
       "softwareKeyboardLayoutMode": "resize",
       "adaptiveIcon": {
         "backgroundColor": "#FFFFFF",
@@ -58,8 +58,12 @@
       [
         "expo-splash-screen",
         {
+          "image": "./assets/images/uk-logo.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
           "backgroundColor": "#000000",
           "dark": {
+            "image": "./assets/images/uk-logo.png",
             "backgroundColor": "#000000"
           }
         }
