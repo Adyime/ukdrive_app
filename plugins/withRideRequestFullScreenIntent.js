@@ -23,7 +23,7 @@ import org.json.JSONObject
 class RideRequestNotificationExtension : INotificationServiceExtension {
 
     companion object {
-        private const val CHANNEL_ID = "ride_request_fullscreen_v3"
+        private const val CHANNEL_ID = "ride_request_fullscreen_v4"
         private const val CHANNEL_NAME = "Ride Requests"
         private const val TIMEOUT_MS = 20_000L
         private const val DEDUPE_PREFS = "ride_request_notification_dedupe"
@@ -32,7 +32,9 @@ class RideRequestNotificationExtension : INotificationServiceExtension {
         private const val ACTIVE_RIDE_KEY = "activeRideId"
         private const val HANDLED_PREFIX = "ride:"
         private const val LEGACY_HANDLED_VALUE = "handled"
-        private const val MAX_NOTIFICATION_AGE_MS = 20_000L
+        // Closed/background delivery can be delayed by Doze/OEM battery policies.
+        // Keep this below the 5-minute ride request expiry, but much higher than 20s.
+        private const val MAX_NOTIFICATION_AGE_MS = 4 * 60 * 1000L
         private val DEDUPE_LOCK = Any()
     }
 
