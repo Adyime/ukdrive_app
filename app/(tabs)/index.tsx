@@ -66,8 +66,10 @@ import {
 } from "@/components/porter-status-card";
 import {
   getCurrentPositionWithAddress,
+  useWatchLocation,
   type LocationWithAddress,
 } from "@/lib/services/location";
+import { useEnsureDriverTrackingContinuity } from "@/lib/services/driver-tracking-continuity";
 import {
   addNotificationEventListener,
   addServiceEventListener,
@@ -120,6 +122,11 @@ const PENDING_RIDE_REFRESH_DEBOUNCE_MS = 350;
 const DRIVER_STATUS_REFRESH_INTERVAL_MS = 10000;
 const PASSENGER_NEARBY_VEHICLE_POLL_INTERVAL_MS = 7000;
 const PASSENGER_NEARBY_VEHICLE_RADIUS_KM = 3;
+const DRIVER_LOCATION_PROACTIVE_REFRESH_MS = 8 * 60 * 1000;
+const DRIVER_LOCATION_STALE_THRESHOLD_MS = 10 * 60 * 1000;
+const DRIVER_LOCATION_WATCHDOG_INTERVAL_MS = 60 * 1000;
+const DRIVER_LOCATION_RETRY_DELAYS_MS = [0, 1500, 3000] as const;
+const DRIVER_LOCATION_STALE_POPUP_COOLDOWN_MS = 5 * 60 * 1000;
 
 type NearbyVehicleMarker = {
   id: string;
@@ -336,6 +343,7 @@ export default function HomeScreen() {
   const [walletBalance, setWalletBalance] = useState(0);
   const [isWalletNegative, setIsWalletNegative] = useState(false);
   const [canGoOnline, setCanGoOnline] = useState(true);
+  const [isGpsFresh, setIsGpsFresh] = useState(true);
 
   // Track previous active ride to detect completion
   const previousRideIdRef = useRef<string | null>(null);
@@ -343,6 +351,9 @@ export default function HomeScreen() {
   const navigationToPaymentRef = useRef<Set<string>>(new Set());
   // Guard to prevent repeated auto-navigation to car-pool OTP screen
   const carPoolOtpNavKeyRef = useRef<string | null>(null);
+  const lastSuccessfulLocationUpdateAtRef = useRef<number | null>(null);
+  const staleLocationPopupLastShownAtRef = useRef(0);
+  const heartbeatRecoveryInFlightRef = useRef(false);
 
   // Fetch active services
   const activeServices = useActiveServices(refreshTrigger);
@@ -355,6 +366,38 @@ export default function HomeScreen() {
       // best-effort cleanup
     }
   }, []);
+
+  const markLocationHeartbeatSuccess = useCallback((updatedAt?: string | Date | null) => {
+    const parsedTime = updatedAt ? new Date(updatedAt).getTime() : Date.now();
+    const now = Date.now();
+    let normalizedTime = now;
+    if (!Number.isFinite(parsedTime)) {
+      normalizedTime = now;
+    } else {
+      normalizedTime = parsedTime;
+    }
+    lastSuccessfulLocationUpdateAtRef.current = normalizedTime;
+    setIsGpsFresh(
+      Math.max(0, now - normalizedTime) < DRIVER_LOCATION_STALE_THRESHOLD_MS
+    );
+  }, []);
+
+  const getHeartbeatAgeMs = useCallback(() => {
+    const updatedAt = lastSuccessfulLocationUpdateAtRef.current;
+    if (!updatedAt) return Number.POSITIVE_INFINITY;
+    return Math.max(0, Date.now() - updatedAt);
+  }, []);
+
+  const refreshGpsFreshness = useCallback(() => {
+    if (userType !== "driver") return true;
+    if (!isAvailable || isWalletNegative || !canGoOnline) {
+      setIsGpsFresh(true);
+      return true;
+    }
+    const fresh = getHeartbeatAgeMs() < DRIVER_LOCATION_STALE_THRESHOLD_MS;
+    setIsGpsFresh(fresh);
+    return fresh;
+  }, [canGoOnline, getHeartbeatAgeMs, isAvailable, isWalletNegative, userType]);
 
   // Refetch active services when screen mounts/user type changes.
   useEffect(() => {
@@ -619,6 +662,13 @@ export default function HomeScreen() {
         setCanGoOnline(walletEligible);
         setIsAvailable(response.data.isAvailable && walletEligible);
         setVerificationStatus(response.data.verificationStatus ?? null);
+        if (response.data.location?.updatedAt) {
+          markLocationHeartbeatSuccess(response.data.location.updatedAt);
+        } else if (response.data.isAvailable && walletEligible) {
+          setIsGpsFresh(false);
+        } else {
+          setIsGpsFresh(true);
+        }
 
         // Sync foreground service state with availability
         // If driver is available, ensure service is running
@@ -647,7 +697,12 @@ export default function HomeScreen() {
     } finally {
       setIsLoadingAvailability(false);
     }
-  }, [activeServices.loading, hasDriverActiveService, userType]);
+  }, [
+    activeServices.loading,
+    hasDriverActiveService,
+    markLocationHeartbeatSuccess,
+    userType,
+  ]);
 
   // Fetch driver availability status on mount (for drivers only)
   // Also ensure background service is stopped for passengers
@@ -663,6 +718,8 @@ export default function HomeScreen() {
       setWalletBalance(0);
       setIsWalletNegative(false);
       setCanGoOnline(true);
+      setIsGpsFresh(true);
+      lastSuccessfulLocationUpdateAtRef.current = null;
       // Stop driver service if it's somehow running for a passenger
       stopDriverService().catch(() => {
         // Ignore errors - service might not be running
@@ -743,7 +800,16 @@ export default function HomeScreen() {
         // Update driver coordinates on server immediately so passengers see them on the map
         try {
           const position = await getCurrentPositionWithAddress();
-          await updateDriverLocation(position.latitude, position.longitude);
+          const locationResponse = await updateDriverLocation(
+            position.latitude,
+            position.longitude
+          );
+          if (locationResponse.success) {
+            markLocationHeartbeatSuccess(
+              locationResponse.data?.location?.updatedAt ?? null
+            );
+            setDriverLocation(position);
+          }
         } catch (e) {
           console.warn(
             "[Home] Could not send current location when going available:",
@@ -771,6 +837,7 @@ export default function HomeScreen() {
         const response = await setAvailability(false);
         if (response.success && response.data) {
           setIsAvailable(response.data.isAvailable);
+          setIsGpsFresh(true);
           // Keep tracking running if driver still has an active service.
           if (!hasDriverActiveService && !activeServices.loading) {
             await stopDriverService();
@@ -833,6 +900,12 @@ export default function HomeScreen() {
   const isPassenger = userType === "passenger";
   const isDriverApproved = verificationStatus === "approved";
   const isWalletRestricted = isWalletNegative || !canGoOnline;
+  const driverConnectivityLabel =
+    isAvailable && !isWalletRestricted
+      ? isGpsFresh
+        ? "Online"
+        : "Reconnecting GPS"
+      : "Offline";
 
   const [selectedMode, setSelectedMode] = useState<
     "ride" | "porter" | "carPool"
@@ -919,6 +992,176 @@ export default function HomeScreen() {
     null
   );
   const pendingRideDispatchWaveRef = useRef<Map<string, string>>(new Map());
+  const showGpsStalePopup = useCallback(() => {
+    const now = Date.now();
+    if (
+      now - staleLocationPopupLastShownAtRef.current <
+      DRIVER_LOCATION_STALE_POPUP_COOLDOWN_MS
+    ) {
+      return;
+    }
+
+    staleLocationPopupLastShownAtRef.current = now;
+    showAlert(
+      "Location Connection Issue",
+      "Your location has not updated for over 10 minutes. You may miss ride requests. Please keep GPS enabled and app permissions set to Always.",
+      [
+        { text: "Dismiss", style: "cancel" },
+        {
+          text: "Retry now",
+          onPress: () => {
+            void (async () => {
+              for (const delayMs of DRIVER_LOCATION_RETRY_DELAYS_MS) {
+                if (delayMs > 0) {
+                  await new Promise((resolve) => setTimeout(resolve, delayMs));
+                }
+                const loc = await getCurrentPositionWithAddress();
+                const response = await updateDriverLocation(
+                  loc.latitude,
+                  loc.longitude
+                );
+                if (response.success) {
+                  markLocationHeartbeatSuccess(
+                    response.data?.location?.updatedAt ?? null
+                  );
+                  setDriverLocation(loc);
+                  return;
+                }
+              }
+
+              const serviceStatus = await getDriverServiceStatus();
+              if (!serviceStatus.isRunning) {
+                await startDriverService();
+              }
+
+              toast.warning(
+                "Could not refresh your location. Please check GPS and permissions."
+              );
+            })().catch((error) => {
+              console.warn(
+                "[HomeScreen] Manual stale-location retry failed:",
+                error
+              );
+              toast.warning(
+                "Could not refresh your location. Please check GPS and permissions."
+              );
+            });
+          },
+        },
+      ]
+    );
+  }, [markLocationHeartbeatSuccess, showAlert, toast]);
+
+  const forceRefreshDriverLocation = useCallback(
+    async (options?: { showPopupOnFailure?: boolean; source?: string }) => {
+      if (userType !== "driver") return false;
+      if (heartbeatRecoveryInFlightRef.current) return false;
+
+      heartbeatRecoveryInFlightRef.current = true;
+      try {
+        let lastErrorMessage: string | null = null;
+        for (const delayMs of DRIVER_LOCATION_RETRY_DELAYS_MS) {
+          if (delayMs > 0) {
+            await new Promise((resolve) => setTimeout(resolve, delayMs));
+          }
+
+          try {
+            const location = await getCurrentPositionWithAddress();
+            const response = await updateDriverLocation(
+              location.latitude,
+              location.longitude
+            );
+            if (response.success) {
+              markLocationHeartbeatSuccess(
+                response.data?.location?.updatedAt ?? null
+              );
+              setDriverLocation(location);
+              return true;
+            }
+            lastErrorMessage =
+              response.error?.message ??
+              response.message ??
+              "Failed to update location";
+          } catch (error) {
+            lastErrorMessage =
+              error instanceof Error
+                ? error.message
+                : "Failed to update location";
+          }
+        }
+
+        const serviceStatus = await getDriverServiceStatus();
+        if (!serviceStatus.isRunning) {
+          await startDriverService();
+        }
+
+        const heartbeatAgeMs = getHeartbeatAgeMs();
+        const isStale = heartbeatAgeMs >= DRIVER_LOCATION_STALE_THRESHOLD_MS;
+        if (isStale) {
+          setIsGpsFresh(false);
+          if (options?.showPopupOnFailure) {
+            showGpsStalePopup();
+          }
+        }
+
+        console.warn("[HomeScreen] Force location refresh failed", {
+          source: options?.source ?? "unknown",
+          lastErrorMessage,
+          heartbeatAgeMs,
+        });
+        return false;
+      } finally {
+        heartbeatRecoveryInFlightRef.current = false;
+      }
+    },
+    [
+      getHeartbeatAgeMs,
+      markLocationHeartbeatSuccess,
+      showGpsStalePopup,
+      userType,
+    ]
+  );
+
+  useWatchLocation({
+    enabled:
+      userType === "driver" &&
+      (isAvailable || hasDriverActiveService) &&
+      !isWalletRestricted,
+    distanceInterval: 20,
+    timeInterval: 10000,
+    onLocation: async (location) => {
+      try {
+        const { shouldPublishFromForegroundWatcher } = await import(
+          "@/lib/services/driver-foreground-service"
+        );
+        const shouldPublish = await shouldPublishFromForegroundWatcher();
+        if (!shouldPublish) return;
+
+        const { updateDriverLocationDebounced } = await import(
+          "@/lib/services/driver-location-updater"
+        );
+        updateDriverLocationDebounced(
+          location.coords.latitude,
+          location.coords.longitude
+        )
+          .catch((error) => {
+            console.warn(
+              "[HomeScreen] Failed to queue fallback location update:",
+              error
+            );
+          });
+      } catch (error) {
+        console.warn("[HomeScreen] Foreground fallback publish check failed:", error);
+      }
+    },
+  });
+
+  useEnsureDriverTrackingContinuity(
+    userType === "driver" &&
+      (isAvailable || hasDriverActiveService) &&
+      !isWalletRestricted,
+    "HomeScreen"
+  );
   const refreshPassengerLocation = useCallback(async () => {
     if (!isPassenger) return;
     try {
@@ -1432,6 +1675,55 @@ export default function HomeScreen() {
       }
     })();
   }, [userType]);
+
+  useEffect(() => {
+    refreshGpsFreshness();
+  }, [refreshGpsFreshness]);
+
+  useEffect(() => {
+    if (
+      userType !== "driver" ||
+      !isAvailable ||
+      isWalletRestricted ||
+      isTogglingAvailability
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const runWatchdog = async () => {
+      if (cancelled) return;
+
+      const heartbeatAgeMs = getHeartbeatAgeMs();
+      const fresh = heartbeatAgeMs < DRIVER_LOCATION_STALE_THRESHOLD_MS;
+      setIsGpsFresh(fresh);
+
+      if (heartbeatAgeMs >= DRIVER_LOCATION_PROACTIVE_REFRESH_MS) {
+        await forceRefreshDriverLocation({
+          showPopupOnFailure: true,
+          source: "watchdog",
+        });
+      }
+    };
+
+    void runWatchdog();
+    const interval = setInterval(() => {
+      void runWatchdog();
+    }, DRIVER_LOCATION_WATCHDOG_INTERVAL_MS);
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [
+    forceRefreshDriverLocation,
+    getHeartbeatAgeMs,
+    isAvailable,
+    isTogglingAvailability,
+    isWalletRestricted,
+    userType,
+  ]);
 
   // Load pending data whenever tab changes or location is available
   useEffect(() => {
@@ -2099,7 +2391,7 @@ export default function HomeScreen() {
                     marginRight: 10,
                   }}
                 >
-                  {isAvailable && !isWalletRestricted ? "Online" : "Offline"}
+                  {driverConnectivityLabel}
                 </Text>
                 {(isTogglingAvailability || isLoadingAvailability) && (
                   <ActivityIndicator size="small" color="#FFFFFF" />
@@ -2121,6 +2413,19 @@ export default function HomeScreen() {
                 ios_backgroundColor="rgba(255,255,255,0.3)"
               />
             </View>
+          )}
+
+          {isDriverApproved && isAvailable && !isWalletRestricted && !isGpsFresh && (
+            <Text
+              style={{
+                fontFamily: "Figtree_500Medium",
+                fontSize: 12,
+                color: "#EDE9FE",
+                marginTop: 8,
+              }}
+            >
+              We are reconnecting your GPS. Keep location enabled to receive rides.
+            </Text>
           )}
 
         </View>
