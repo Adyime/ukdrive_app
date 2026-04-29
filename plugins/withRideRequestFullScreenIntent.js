@@ -87,7 +87,7 @@ class RideRequestNotificationExtension : INotificationServiceExtension {
             return
         }
 
-        IncomingRequestSoundController.start(context)
+        IncomingRequestSoundController.start(context, TIMEOUT_MS)
 
         val pickup = additionalData.optString("pickupLocation", "")
         val destination = if (hasRideRequest) {
@@ -286,15 +286,23 @@ import android.content.Context
 import android.media.AudioAttributes
 import android.media.MediaPlayer
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import androidx.annotation.Keep
 
 @Keep
 object IncomingRequestSoundController {
     private val lock = Any()
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     private var mediaPlayer: MediaPlayer? = null
+    private var scheduledStop: Runnable? = null
 
     fun start(context: Context) {
+        start(context, null)
+    }
+
+    fun start(context: Context, timeoutMs: Long?) {
         val appContext = context.applicationContext
 
         synchronized(lock) {
@@ -342,6 +350,7 @@ object IncomingRequestSoundController {
             }
 
             mediaPlayer = player
+            scheduleStopLocked(timeoutMs)
         }
     }
 
@@ -352,6 +361,8 @@ object IncomingRequestSoundController {
     }
 
     private fun stopLocked() {
+        clearScheduledStopLocked()
+
         mediaPlayer?.let { player ->
             try {
                 if (player.isPlaying) {
@@ -372,6 +383,26 @@ object IncomingRequestSoundController {
         }
 
         mediaPlayer = null
+    }
+
+    private fun scheduleStopLocked(timeoutMs: Long?) {
+        clearScheduledStopLocked()
+        if (timeoutMs == null || timeoutMs <= 0L) {
+            return
+        }
+
+        val runnable = Runnable {
+            stop()
+        }
+        scheduledStop = runnable
+        mainHandler.postDelayed(runnable, timeoutMs)
+    }
+
+    private fun clearScheduledStopLocked() {
+        scheduledStop?.let { runnable ->
+            mainHandler.removeCallbacks(runnable)
+        }
+        scheduledStop = null
     }
 }
 `;
