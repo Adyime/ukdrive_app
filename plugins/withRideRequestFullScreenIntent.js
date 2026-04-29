@@ -45,6 +45,12 @@ class RideRequestNotificationExtension : INotificationServiceExtension {
 
         val notificationType = additionalData.optString("notificationType", "")
         val type = additionalData.optString("type", "")
+        if (isTerminalIncomingEvent(notificationType, type)) {
+            IncomingRequestSoundController.stop()
+            clearIncomingRequestNotifications(context)
+            return
+        }
+
         val hasRideRequest = notificationType == "incoming_ride" ||
             type == "ride_request"
         val hasPorterRequest = notificationType == "incoming_porter" ||
@@ -275,6 +281,39 @@ class RideRequestNotificationExtension : INotificationServiceExtension {
             return false
         }
     }
+
+    private fun isTerminalIncomingEvent(notificationType: String, type: String): Boolean {
+        val normalizedType = type.trim().lowercase()
+        val normalizedNotificationType = notificationType.trim().lowercase()
+
+        val terminalTypes = setOf(
+            "ride_request_dismissed",
+            "ride_request_cancelled",
+            "ride_cancelled",
+            "ride_dismissed",
+            "porter_request_dismissed",
+            "porter_request_cancelled",
+            "porter_dismissed",
+            "porter_cancelled"
+        )
+        val terminalNotificationTypes = setOf(
+            "ride_dismissed",
+            "ride_cancelled",
+            "porter_dismissed",
+            "porter_cancelled"
+        )
+
+        return normalizedType in terminalTypes ||
+            normalizedNotificationType in terminalNotificationTypes
+    }
+
+    private fun clearIncomingRequestNotifications(context: Context) {
+        try {
+            val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+            manager?.cancelAll()
+        } catch (_: Throwable) {
+        }
+    }
 }
 `;
 }
@@ -461,8 +500,12 @@ class RideIncomingProxyActivity : Activity() {
                 WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
         )
 
-        IncomingRequestSoundController.start(applicationContext)
         openIncomingScreen()
+    }
+
+    override fun onDestroy() {
+        IncomingRequestSoundController.stop()
+        super.onDestroy()
     }
 
     private fun shouldIgnoreRideRequest(rideId: String, sentAtRaw: String?): Boolean {

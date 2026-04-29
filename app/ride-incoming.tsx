@@ -395,6 +395,7 @@ export default function RideIncomingScreen() {
       const uniqueRideIds = Array.from(new Set(rideIds.filter(Boolean)));
       if (uniqueRideIds.length === 0) return;
 
+      void stopNativeIncomingAlertSound();
       await Promise.allSettled(uniqueRideIds.map((id) => setHandledRide(id)));
       clearRideNotifications();
       dispatchServiceUpdated();
@@ -793,6 +794,7 @@ export default function RideIncomingScreen() {
         if (status !== "ACCEPTED" && status !== "CANCELLED") return;
         if (status === "ACCEPTED" && updated.driver_id === user?.id) return;
 
+        void stopNativeIncomingAlertSound();
         markIncomingRideHandled(request.rideId);
         clearRideNotifications();
         dispatchServiceUpdated();
