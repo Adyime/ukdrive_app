@@ -31,12 +31,38 @@ const COUNTDOWN_SECONDS = 18;
 const BRAND_PURPLE = "#843FE3";
 const RINGTONE_URI = require("@/assets/ukdrive.mp3");
 
+function parseNotificationTimestamp(value?: string): number | null {
+  if (!value) return null;
+  const numeric = Number(value);
+  if (Number.isFinite(numeric)) {
+    if (numeric > 1_000_000_000_000) return numeric;
+    if (numeric > 1_000_000_000) return numeric * 1000;
+    return null;
+  }
+  const asDate = Date.parse(value);
+  if (!Number.isNaN(asDate)) return asDate;
+  return null;
+}
+
+function getRequestExpiresAtMs(sentAt?: string): number {
+  const sentAtMs = parseNotificationTimestamp(sentAt);
+  const requestStartedAtMs = sentAtMs ?? Date.now();
+  return requestStartedAtMs + COUNTDOWN_SECONDS * 1000;
+}
+
+function getCountdownFromExpiresAt(expiresAtMs: number): number {
+  const remainingMs = expiresAtMs - Date.now();
+  if (remainingMs <= 0) return 0;
+  return Math.max(1, Math.ceil(remainingMs / 1000));
+}
+
 export default function PorterIncomingScreen() {
   const params = useLocalSearchParams<{
     porterServiceId: string;
     pickupLocation?: string;
     deliveryLocation?: string;
     fare?: string;
+    sentAt?: string;
   }>();
 
   const {
@@ -44,6 +70,7 @@ export default function PorterIncomingScreen() {
     pickupLocation: paramPickup,
     deliveryLocation: paramDelivery,
     fare: paramFare,
+    sentAt: paramSentAt,
   } = params;
 
   const { userType } = useAuth();
@@ -53,7 +80,10 @@ export default function PorterIncomingScreen() {
   const [deliveryLocation, setDeliveryLocation] = useState(paramDelivery ?? "");
   const [fare, setFare] = useState(paramFare ?? "");
   const [loading, setLoading] = useState(true);
-  const [countdown, setCountdown] = useState(COUNTDOWN_SECONDS);
+  const expiresAtMsRef = useRef(getRequestExpiresAtMs(paramSentAt));
+  const [countdown, setCountdown] = useState(
+    getCountdownFromExpiresAt(expiresAtMsRef.current)
+  );
   const [accepting, setAccepting] = useState(false);
   const [dismissing, setDismissing] = useState(false);
   const [ended, setEnded] = useState(false);
@@ -132,8 +162,9 @@ export default function PorterIncomingScreen() {
     if (!porterServiceId || ended) return;
 
     timerRef.current = setInterval(() => {
-      setCountdown((prev) => {
-        if (prev <= 1) {
+      setCountdown(() => {
+        const nextCountdown = getCountdownFromExpiresAt(expiresAtMsRef.current);
+        if (nextCountdown <= 0) {
           if (timerRef.current) {
             clearInterval(timerRef.current);
             timerRef.current = null;
@@ -144,7 +175,7 @@ export default function PorterIncomingScreen() {
           endScreen(true);
           return 0;
         }
-        return prev - 1;
+        return nextCountdown;
       });
     }, 1000);
 

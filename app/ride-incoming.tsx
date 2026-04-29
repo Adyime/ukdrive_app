@@ -131,14 +131,6 @@ function parseNotificationTimestamp(value?: string): number | null {
   return null;
 }
 
-function getInitialCountdownSeconds(sentAt?: string): number {
-  const sentAtMs = parseNotificationTimestamp(sentAt);
-  if (sentAtMs == null) return COUNTDOWN_SECONDS;
-  const elapsedSeconds = Math.floor((Date.now() - sentAtMs) / 1000);
-  const remaining = COUNTDOWN_SECONDS - elapsedSeconds;
-  return Math.max(1, Math.min(COUNTDOWN_SECONDS, remaining));
-}
-
 function isIncomingSentAtNewer(currentSentAt?: string, incomingSentAt?: string): boolean {
   const currentMs = parseNotificationTimestamp(currentSentAt);
   const incomingMs = parseNotificationTimestamp(incomingSentAt);
@@ -199,11 +191,24 @@ type IncomingRideCard = {
   fare: string;
   distance: string;
   sentAt?: string;
+  expiresAtMs: number;
   countdown: number;
   loading: boolean;
   accepting: boolean;
   declining: boolean;
 };
+
+function getRequestExpiresAtMs(sentAt?: string): number {
+  const sentAtMs = parseNotificationTimestamp(sentAt);
+  const requestStartedAtMs = sentAtMs ?? Date.now();
+  return requestStartedAtMs + COUNTDOWN_SECONDS * 1000;
+}
+
+function getCountdownFromExpiresAt(expiresAtMs: number): number {
+  const remainingMs = expiresAtMs - Date.now();
+  if (remainingMs <= 0) return 0;
+  return Math.max(1, Math.ceil(remainingMs / 1000));
+}
 
 function toIncomingRideCard(
   payload: IncomingRideRequestPayload
@@ -212,6 +217,7 @@ function toIncomingRideCard(
   const destination = decodeParam(payload.destination);
   const fare = normalizeFareValue(decodeParam(payload.fare));
   const distance = normalizeDistanceValue(decodeParam(payload.distance));
+  const expiresAtMs = getRequestExpiresAtMs(payload.sentAt);
 
   return {
     rideId: payload.rideId,
@@ -220,7 +226,8 @@ function toIncomingRideCard(
     fare,
     distance,
     sentAt: payload.sentAt,
-    countdown: getInitialCountdownSeconds(payload.sentAt),
+    expiresAtMs,
+    countdown: getCountdownFromExpiresAt(expiresAtMs),
     loading: !pickupLocation || !destination || !fare,
     accepting: false,
     declining: false,
@@ -358,8 +365,11 @@ export default function RideIncomingScreen() {
           fare: incoming.fare || existing.fare,
           distance: incoming.distance || existing.distance,
           sentAt: incoming.sentAt ?? existing.sentAt,
+          expiresAtMs: isIncomingSentAtNewer(existing.sentAt, incoming.sentAt)
+            ? incoming.expiresAtMs
+            : existing.expiresAtMs,
           countdown: isIncomingSentAtNewer(existing.sentAt, incoming.sentAt)
-            ? getInitialCountdownSeconds(incoming.sentAt)
+            ? getCountdownFromExpiresAt(incoming.expiresAtMs)
             : existing.countdown,
           loading:
             existing.loading &&
@@ -713,13 +723,14 @@ export default function RideIncomingScreen() {
       setRequests((prev) => {
         const next: IncomingRideCard[] = [];
         for (const request of prev) {
-          if (request.countdown <= 1) {
+          const nextCountdown = getCountdownFromExpiresAt(request.expiresAtMs);
+          if (nextCountdown <= 0) {
             expiredRideIds.push(request.rideId);
             continue;
           }
           next.push({
             ...request,
-            countdown: request.countdown - 1,
+            countdown: nextCountdown,
           });
         }
         return next;

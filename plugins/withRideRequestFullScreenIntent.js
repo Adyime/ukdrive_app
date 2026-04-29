@@ -8,6 +8,7 @@ function buildNotificationExtensionKotlin(packageName) {
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.app.AlarmManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -128,7 +129,16 @@ class RideRequestNotificationExtension : INotificationServiceExtension {
             Intent(context, IncomingRequestNotificationDeleteReceiver::class.java),
             flags
         )
+        val timeoutIntent = PendingIntent.getBroadcast(
+            context,
+            requestId.hashCode() + 2,
+            Intent(context, IncomingRequestSoundTimeoutReceiver::class.java).apply {
+                action = "ukdrive.intent.action.STOP_INCOMING_REQUEST"
+            },
+            flags
+        )
         val allowFullScreen = canUseFullScreenIntent(context)
+        scheduleIncomingRequestTimeout(context, timeoutIntent, TIMEOUT_MS)
 
         notification.setExtender { builder ->
             builder
@@ -314,6 +324,32 @@ class RideRequestNotificationExtension : INotificationServiceExtension {
         } catch (_: Throwable) {
         }
     }
+
+    private fun scheduleIncomingRequestTimeout(
+        context: Context,
+        timeoutIntent: PendingIntent,
+        timeoutMs: Long
+    ) {
+        try {
+            val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager
+                ?: return
+            val triggerAtMillis = System.currentTimeMillis() + timeoutMs
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                alarmManager.setExactAndAllowWhileIdle(
+                    AlarmManager.RTC_WAKEUP,
+                    triggerAtMillis,
+                    timeoutIntent
+                )
+            } else {
+                alarmManager.setExact(
+                    AlarmManager.RTC_WAKEUP,
+                    triggerAtMillis,
+                    timeoutIntent
+                )
+            }
+        } catch (_: Throwable) {
+        }
+    }
 }
 `;
 }
@@ -453,12 +489,41 @@ function buildIncomingRequestNotificationDeleteReceiverKotlin(packageName) {
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.app.NotificationManager
 import androidx.annotation.Keep
 
 @Keep
 class IncomingRequestNotificationDeleteReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context?, intent: Intent?) {
         IncomingRequestSoundController.stop()
+        try {
+            val manager = context?.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+            manager?.cancelAll()
+        } catch (_: Throwable) {
+        }
+    }
+}
+`;
+}
+
+function buildIncomingRequestSoundTimeoutReceiverKotlin(packageName) {
+  return `package ${packageName}
+
+import android.app.NotificationManager
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import androidx.annotation.Keep
+
+@Keep
+class IncomingRequestSoundTimeoutReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context?, intent: Intent?) {
+        IncomingRequestSoundController.stop()
+        try {
+            val manager = context?.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+            manager?.cancelAll()
+        } catch (_: Throwable) {
+        }
     }
 }
 `;
@@ -797,6 +862,11 @@ function withRideRequestFullScreenIntent(config) {
         "utf8"
       );
       await fs.promises.writeFile(
+        path.join(packagePath, "IncomingRequestSoundTimeoutReceiver.kt"),
+        buildIncomingRequestSoundTimeoutReceiverKotlin(packageName),
+        "utf8"
+      );
+      await fs.promises.writeFile(
         path.join(packagePath, "RideNotificationGuardModule.kt"),
         buildRideNotificationGuardModuleKotlin(packageName),
         "utf8"
@@ -855,6 +925,12 @@ function withRideRequestFullScreenIntent(config) {
         `<receiver android:name=".IncomingRequestNotificationDeleteReceiver" android:exported="false" />`;
       if (!manifest.includes('android:name=".IncomingRequestNotificationDeleteReceiver"')) {
         manifest = manifest.replace("</application>", `  ${deleteReceiverTag}\n</application>`);
+      }
+
+      const timeoutReceiverTag =
+        `<receiver android:name=".IncomingRequestSoundTimeoutReceiver" android:exported="false" />`;
+      if (!manifest.includes('android:name=".IncomingRequestSoundTimeoutReceiver"')) {
+        manifest = manifest.replace("</application>", `  ${timeoutReceiverTag}\n</application>`);
       }
 
       await fs.promises.writeFile(manifestPath, manifest, "utf8");
