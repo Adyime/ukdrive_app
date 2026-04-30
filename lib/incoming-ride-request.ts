@@ -24,7 +24,10 @@ let incomingRidePopupRideId: string | null = null;
 let incomingRidePopupVisible = false;
 
 const RECENTLY_SHOWN_TTL_MS = 60 * 1000;
-const DEFAULT_NOTIFICATION_MAX_AGE_MS = 20 * 1000;
+// Closed/background push delivery can easily be delayed by Android power
+// management, so keep the stale guard comfortably below the 5-minute ride
+// request timeout instead of dropping requests after only 20 seconds.
+const DEFAULT_NOTIFICATION_MAX_AGE_MS = 4 * 60 * 1000;
 const HANDLED_RIDE_KEY_PREFIX = "ride:";
 const ACTIVE_RIDE_KEY = "activeRideId";
 

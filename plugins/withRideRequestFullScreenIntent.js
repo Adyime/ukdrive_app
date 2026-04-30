@@ -8,6 +8,7 @@ function buildNotificationExtensionKotlin(packageName) {
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.app.AlarmManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -23,7 +24,7 @@ import org.json.JSONObject
 class RideRequestNotificationExtension : INotificationServiceExtension {
 
     companion object {
-        private const val CHANNEL_ID = "ride_request_fullscreen_v3"
+        private const val CHANNEL_ID = "ride_request_fullscreen_v4"
         private const val CHANNEL_NAME = "Ride Requests"
         private const val TIMEOUT_MS = 20_000L
         private const val DEDUPE_PREFS = "ride_request_notification_dedupe"
@@ -32,7 +33,9 @@ class RideRequestNotificationExtension : INotificationServiceExtension {
         private const val ACTIVE_RIDE_KEY = "activeRideId"
         private const val HANDLED_PREFIX = "ride:"
         private const val LEGACY_HANDLED_VALUE = "handled"
-        private const val MAX_NOTIFICATION_AGE_MS = 20_000L
+        // Closed/background delivery can be delayed by Doze/OEM battery policies.
+        // Keep this below the 5-minute ride request expiry, but much higher than 20s.
+        private const val MAX_NOTIFICATION_AGE_MS = 4 * 60 * 1000L
         private val DEDUPE_LOCK = Any()
     }
 
@@ -43,6 +46,12 @@ class RideRequestNotificationExtension : INotificationServiceExtension {
 
         val notificationType = additionalData.optString("notificationType", "")
         val type = additionalData.optString("type", "")
+        if (isTerminalIncomingEvent(notificationType, type)) {
+            IncomingRequestSoundController.stop()
+            clearIncomingRequestNotifications(context)
+            return
+        }
+
         val hasRideRequest = notificationType == "incoming_ride" ||
             type == "ride_request"
         val hasPorterRequest = notificationType == "incoming_porter" ||
@@ -85,7 +94,7 @@ class RideRequestNotificationExtension : INotificationServiceExtension {
             return
         }
 
-        IncomingRequestSoundController.start(context)
+        IncomingRequestSoundController.start(context, TIMEOUT_MS)
 
         val pickup = additionalData.optString("pickupLocation", "")
         val destination = if (hasRideRequest) {
@@ -120,7 +129,16 @@ class RideRequestNotificationExtension : INotificationServiceExtension {
             Intent(context, IncomingRequestNotificationDeleteReceiver::class.java),
             flags
         )
+        val timeoutIntent = PendingIntent.getBroadcast(
+            context,
+            requestId.hashCode() + 2,
+            Intent(context, IncomingRequestSoundTimeoutReceiver::class.java).apply {
+                action = "ukdrive.intent.action.STOP_INCOMING_REQUEST"
+            },
+            flags
+        )
         val allowFullScreen = canUseFullScreenIntent(context)
+        scheduleIncomingRequestTimeout(context, timeoutIntent, TIMEOUT_MS)
 
         notification.setExtender { builder ->
             builder
@@ -273,6 +291,65 @@ class RideRequestNotificationExtension : INotificationServiceExtension {
             return false
         }
     }
+
+    private fun isTerminalIncomingEvent(notificationType: String, type: String): Boolean {
+        val normalizedType = type.trim().lowercase()
+        val normalizedNotificationType = notificationType.trim().lowercase()
+
+        val terminalTypes = setOf(
+            "ride_request_dismissed",
+            "ride_request_cancelled",
+            "ride_cancelled",
+            "ride_dismissed",
+            "porter_request_dismissed",
+            "porter_request_cancelled",
+            "porter_dismissed",
+            "porter_cancelled"
+        )
+        val terminalNotificationTypes = setOf(
+            "ride_dismissed",
+            "ride_cancelled",
+            "porter_dismissed",
+            "porter_cancelled"
+        )
+
+        return normalizedType in terminalTypes ||
+            normalizedNotificationType in terminalNotificationTypes
+    }
+
+    private fun clearIncomingRequestNotifications(context: Context) {
+        try {
+            val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+            manager?.cancelAll()
+        } catch (_: Throwable) {
+        }
+    }
+
+    private fun scheduleIncomingRequestTimeout(
+        context: Context,
+        timeoutIntent: PendingIntent,
+        timeoutMs: Long
+    ) {
+        try {
+            val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager
+                ?: return
+            val triggerAtMillis = System.currentTimeMillis() + timeoutMs
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                alarmManager.setExactAndAllowWhileIdle(
+                    AlarmManager.RTC_WAKEUP,
+                    triggerAtMillis,
+                    timeoutIntent
+                )
+            } else {
+                alarmManager.setExact(
+                    AlarmManager.RTC_WAKEUP,
+                    triggerAtMillis,
+                    timeoutIntent
+                )
+            }
+        } catch (_: Throwable) {
+        }
+    }
 }
 `;
 }
@@ -284,15 +361,23 @@ import android.content.Context
 import android.media.AudioAttributes
 import android.media.MediaPlayer
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import androidx.annotation.Keep
 
 @Keep
 object IncomingRequestSoundController {
     private val lock = Any()
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     private var mediaPlayer: MediaPlayer? = null
+    private var scheduledStop: Runnable? = null
 
     fun start(context: Context) {
+        start(context, null)
+    }
+
+    fun start(context: Context, timeoutMs: Long?) {
         val appContext = context.applicationContext
 
         synchronized(lock) {
@@ -340,6 +425,7 @@ object IncomingRequestSoundController {
             }
 
             mediaPlayer = player
+            scheduleStopLocked(timeoutMs)
         }
     }
 
@@ -350,6 +436,8 @@ object IncomingRequestSoundController {
     }
 
     private fun stopLocked() {
+        clearScheduledStopLocked()
+
         mediaPlayer?.let { player ->
             try {
                 if (player.isPlaying) {
@@ -371,6 +459,26 @@ object IncomingRequestSoundController {
 
         mediaPlayer = null
     }
+
+    private fun scheduleStopLocked(timeoutMs: Long?) {
+        clearScheduledStopLocked()
+        if (timeoutMs == null || timeoutMs <= 0L) {
+            return
+        }
+
+        val runnable = Runnable {
+            stop()
+        }
+        scheduledStop = runnable
+        mainHandler.postDelayed(runnable, timeoutMs)
+    }
+
+    private fun clearScheduledStopLocked() {
+        scheduledStop?.let { runnable ->
+            mainHandler.removeCallbacks(runnable)
+        }
+        scheduledStop = null
+    }
 }
 `;
 }
@@ -381,12 +489,41 @@ function buildIncomingRequestNotificationDeleteReceiverKotlin(packageName) {
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.app.NotificationManager
 import androidx.annotation.Keep
 
 @Keep
 class IncomingRequestNotificationDeleteReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context?, intent: Intent?) {
         IncomingRequestSoundController.stop()
+        try {
+            val manager = context?.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+            manager?.cancelAll()
+        } catch (_: Throwable) {
+        }
+    }
+}
+`;
+}
+
+function buildIncomingRequestSoundTimeoutReceiverKotlin(packageName) {
+  return `package ${packageName}
+
+import android.app.NotificationManager
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import androidx.annotation.Keep
+
+@Keep
+class IncomingRequestSoundTimeoutReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context?, intent: Intent?) {
+        IncomingRequestSoundController.stop()
+        try {
+            val manager = context?.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+            manager?.cancelAll()
+        } catch (_: Throwable) {
+        }
     }
 }
 `;
@@ -428,8 +565,12 @@ class RideIncomingProxyActivity : Activity() {
                 WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
         )
 
-        IncomingRequestSoundController.start(applicationContext)
         openIncomingScreen()
+    }
+
+    override fun onDestroy() {
+        IncomingRequestSoundController.stop()
+        super.onDestroy()
     }
 
     private fun shouldIgnoreRideRequest(rideId: String, sentAtRaw: String?): Boolean {
@@ -721,6 +862,11 @@ function withRideRequestFullScreenIntent(config) {
         "utf8"
       );
       await fs.promises.writeFile(
+        path.join(packagePath, "IncomingRequestSoundTimeoutReceiver.kt"),
+        buildIncomingRequestSoundTimeoutReceiverKotlin(packageName),
+        "utf8"
+      );
+      await fs.promises.writeFile(
         path.join(packagePath, "RideNotificationGuardModule.kt"),
         buildRideNotificationGuardModuleKotlin(packageName),
         "utf8"
@@ -779,6 +925,12 @@ function withRideRequestFullScreenIntent(config) {
         `<receiver android:name=".IncomingRequestNotificationDeleteReceiver" android:exported="false" />`;
       if (!manifest.includes('android:name=".IncomingRequestNotificationDeleteReceiver"')) {
         manifest = manifest.replace("</application>", `  ${deleteReceiverTag}\n</application>`);
+      }
+
+      const timeoutReceiverTag =
+        `<receiver android:name=".IncomingRequestSoundTimeoutReceiver" android:exported="false" />`;
+      if (!manifest.includes('android:name=".IncomingRequestSoundTimeoutReceiver"')) {
+        manifest = manifest.replace("</application>", `  ${timeoutReceiverTag}\n</application>`);
       }
 
       await fs.promises.writeFile(manifestPath, manifest, "utf8");

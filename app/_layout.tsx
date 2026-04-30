@@ -36,6 +36,7 @@ import { AlertProvider } from "@/context/alert-context";
 import { LanguageProvider } from "@/context/language-context";
 import { ToastProvider } from "@/components/ui/toast";
 import { Loading } from "@/components/ui/loading";
+import { AppUpdateGate } from "@/components/app-update-gate";
 import {
   initializeIncomingRideState,
   isIncomingRideRecentlyShown,
@@ -234,6 +235,7 @@ function KeyboardInsetContainer({ children }: { children: ReactNode }) {
 
 const ANIMATED_SPLASH_GIF = require("@/assets/images/UKDRIVE.gif");
 const ANIMATED_SPLASH_DURATION_MS = 3500; // how long to show the GIF
+const SPLASH_BACKGROUND_COLOR = "#000000";
 
 export default function RootLayout() {
   const colorScheme = useColorScheme();
@@ -262,10 +264,14 @@ export default function RootLayout() {
   // Hide native splash ASAP so the GIF overlay is visible
   useEffect(() => {
     if (nativeSplashHidden.current) return;
-    nativeSplashHidden.current = true;
-    SplashScreen.hideAsync().catch(() => {
-      // best-effort; animated GIF overlay is the visible launch experience
+    const frame = requestAnimationFrame(() => {
+      nativeSplashHidden.current = true;
+      SplashScreen.hideAsync().catch(() => {
+        // best-effort; animated GIF overlay is the visible launch experience
+      });
     });
+
+    return () => cancelAnimationFrame(frame);
   }, []);
 
   useEffect(() => {
@@ -310,6 +316,7 @@ export default function RootLayout() {
                   <ToastProvider>
                     <KeyboardInsetContainer>
                       <RootLayoutNav />
+                      <AppUpdateGate />
                       <StatusBar style="auto" />
                     </KeyboardInsetContainer>
                   </ToastProvider>
@@ -319,7 +326,7 @@ export default function RootLayout() {
           </LanguageProvider>
         </SafeAreaProvider>
       ) : (
-        <View style={{ flex: 1, backgroundColor: "#000" }} />
+        <View style={{ flex: 1, backgroundColor: SPLASH_BACKGROUND_COLOR }} />
       )}
 
       {/* Animated GIF splash overlay */}
@@ -328,7 +335,11 @@ export default function RootLayout() {
           pointerEvents="none"
           style={[
             StyleSheet.absoluteFill,
-            { opacity: splashOpacity, zIndex: 999, backgroundColor: "#000" },
+            {
+              opacity: splashOpacity,
+              zIndex: 999,
+              backgroundColor: SPLASH_BACKGROUND_COLOR,
+            },
           ]}
         >
           <Animated.Image

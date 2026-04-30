@@ -257,11 +257,20 @@ export default function ActiveRideScreen() {
             prev.set(d.id, { latitude: d.latitude, longitude: d.longitude });
             // Resolve vehicle type for correct marker icon — try category fields first
             const resolvedType = [
-              d.vehicleCategorySlug,
-              d.vehicleCategoryName,
-              d.vehicleType,
+              d.markerCategory,
+              d.marker_category,
               d.vehicleSubcategorySlug,
-            ].find((v: unknown): v is string => typeof v === "string" && v.trim().length > 0);
+              d.vehicle_subcategory_slug,
+              d.vehicleType,
+              d.vehicle_type,
+              d.vehicleCategorySlug,
+              d.vehicle_category_slug,
+              d.vehicleCategoryName,
+              d.vehicle_category_name,
+            ].find(
+              (v: unknown): v is string =>
+                typeof v === "string" && v.trim().length > 0
+            );
             return { id: d.id, latitude: d.latitude, longitude: d.longitude, vehicleType: resolvedType, heading };
           });
         nearbyVehiclePrevRef.current = prev;

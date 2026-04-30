@@ -8,6 +8,7 @@
     "ios": "expo run:ios",
     "web": "expo start --web",
     "lint": "expo lint",
+    "postinstall": "node ./scripts/patch-expo-autolinking-kotlin.mjs",
     "build:android:local": "eas build --platform android --profile preview --local",
     "build:ios:local": "eas build --platform ios --profile preview --local",
     "check:ios-env": "node ./scripts/check-ios-env.mjs"

@@ -26,6 +26,8 @@ const BIKE_VEHICLE_TYPES = new Set([
   "motorbike",
 ]);
 
+const CAR_VEHICLE_TYPES = new Set(["car", "cab"]);
+
 const VEHICLE_MARKER_ASSETS: Record<
   VehicleMarkerCategory,
   Record<VehicleMarkerOrientation, ImageSourcePropType>
@@ -57,6 +59,21 @@ export function normalizeVehicleMarkerCategory(
     .toLowerCase();
 
   if (!normalized) return "car";
+
+  // Canonical category shortcuts from admin category slugs
+  if (normalized === "a" || normalized.startsWith("a_") || normalized.startsWith("a-")) {
+    return "auto";
+  }
+  if (normalized === "b" || normalized.startsWith("b_") || normalized.startsWith("b-")) {
+    return "bike";
+  }
+  if (normalized === "c" || normalized.startsWith("c_") || normalized.startsWith("c-")) {
+    return "car";
+  }
+
+  if (CAR_VEHICLE_TYPES.has(normalized)) {
+    return "car";
+  }
   if (
     AUTO_VEHICLE_TYPES.has(normalized) ||
     normalized.includes("rickshaw") ||
@@ -74,6 +91,11 @@ export function normalizeVehicleMarkerCategory(
   ) {
     return "bike";
   }
+
+  if (normalized.includes("cab") || normalized.includes("car")) {
+    return "car";
+  }
+
   return "car";
 }
 

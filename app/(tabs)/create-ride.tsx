@@ -541,6 +541,8 @@ export default function CreateRideScreen() {
           location?: { latitude?: unknown; longitude?: unknown; lat?: unknown; lng?: unknown } | null;
           coordinate?: { latitude?: unknown; longitude?: unknown; lat?: unknown; lng?: unknown } | null;
           heading?: number | string | null;
+          markerCategory?: string | null;
+          marker_category?: string | null;
           vehicleType?: string | null;
           vehicle_type?: string | null;
           vehicleSubcategorySlug?: string | null;
@@ -586,6 +588,13 @@ export default function CreateRideScreen() {
             d.heading as number | string | null | undefined
           );
           const resolvedVehicleType = [
+            d.markerCategory,
+            d.marker_category,
+            d.vehicleSubcategorySlug,
+            d.vehicle_subcategory_slug,
+            d.vehicleSubcategory?.slug,
+            d.vehicle_subcategory?.slug,
+            d.slug,
             d.vehicleType,
             d.vehicle_type,
             d.vehicleCategorySlug,
@@ -596,11 +605,6 @@ export default function CreateRideScreen() {
             d.vehicle_category_name,
             d.vehicleCategory?.name,
             d.vehicle_category?.name,
-            d.vehicleSubcategorySlug,
-            d.vehicle_subcategory_slug,
-            d.vehicleSubcategory?.slug,
-            d.vehicle_subcategory?.slug,
-            d.slug,
           ].find((value): value is string => typeof value === "string" && value.trim().length > 0);
 
           return {
