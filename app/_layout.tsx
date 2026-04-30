@@ -36,6 +36,7 @@ import { AlertProvider } from "@/context/alert-context";
 import { LanguageProvider } from "@/context/language-context";
 import { ToastProvider } from "@/components/ui/toast";
 import { Loading } from "@/components/ui/loading";
+import { AppUpdateGate } from "@/components/app-update-gate";
 import {
   initializeIncomingRideState,
   isIncomingRideRecentlyShown,
@@ -315,6 +316,7 @@ export default function RootLayout() {
                   <ToastProvider>
                     <KeyboardInsetContainer>
                       <RootLayoutNav />
+                      <AppUpdateGate />
                       <StatusBar style="auto" />
                     </KeyboardInsetContainer>
                   </ToastProvider>

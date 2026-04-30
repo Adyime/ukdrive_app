@@ -32,6 +32,19 @@ const HI_EXACT_TRANSLATIONS: Record<string, string> = {
   "Delete My Account": "मेरा खाता हटाएं",
   "Cancel": "रद्द करें",
   "Continue": "जारी रखें",
+  "Update Required": "अपडेट आवश्यक है",
+  "Update Available": "अपडेट उपलब्ध है",
+  "Update Now": "अभी अपडेट करें",
+  "Skip for now": "अभी छोड़ें",
+  "This version of UK Drive is no longer supported. Update now to continue using the app.":
+    "यूके ड्राइव का यह संस्करण अब समर्थित नहीं है। ऐप का उपयोग जारी रखने के लिए अभी अपडेट करें।",
+  "A newer version of UK Drive is available. Update now for the latest improvements and fixes.":
+    "यूके ड्राइव का नया संस्करण उपलब्ध है। नवीनतम सुधारों और फिक्स के लिए अभी अपडेट करें।",
+  "Installed version code": "इंस्टॉल किया गया वर्ज़न कोड",
+  "Minimum required version code": "न्यूनतम आवश्यक वर्ज़न कोड",
+  "Latest version code": "नवीनतम वर्ज़न कोड",
+  "You won't be able to continue until the app is updated.":
+    "ऐप अपडेट होने तक आप आगे जारी नहीं रख पाएंगे।",
   "Failed to logout. Please try again.": "लॉगआउट नहीं हो सका। कृपया फिर से प्रयास करें।",
   "Failed to submit deletion request. Please try again.":
     "डिलीशन अनुरोध सबमिट नहीं हो सका। कृपया फिर से प्रयास करें।",
