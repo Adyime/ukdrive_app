@@ -198,6 +198,9 @@ export async function startDriverService(): Promise<boolean> {
         notificationTitle: 'UK Drive - Available',
         notificationBody: 'You are available for ride requests',
         notificationColor: '#843FE3', // Driver brand purple
+        // On Android, keep the tracking service alive when the task is swiped
+        // away from recents so passenger maps can continue receiving heartbeats.
+        killServiceOnDestroy: false,
       },
 
       // iOS configuration
