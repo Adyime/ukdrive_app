@@ -6,13 +6,13 @@ import {
   Modal,
   Platform,
   Pressable,
+  TouchableOpacity,
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { ArrowUpCircle, ShieldAlert } from "lucide-react-native";
 import { useAuth } from "@/context/auth-context";
 import { LocalizedText as Text } from "@/components/localized-text";
-import { Button } from "@/components/ui/button";
 import {
   compareAndroidVersionCodes,
   getAndroidAppVersion,
@@ -24,6 +24,7 @@ const BRAND_ORANGE = "#F36D14";
 const BRAND_ORANGE_SOFT = "#FFF0E8";
 const BRAND_PURPLE = "#843FE3";
 const BRAND_PURPLE_SOFT = "#F3EEFE";
+const SECONDARY_BUTTON_BG = "#424B60";
 const PLAY_STORE_FALLBACK_URL =
   "https://play.google.com/store/apps/details?id=com.wnapp.id1755261066753";
 
@@ -31,6 +32,42 @@ type GateState =
   | { kind: "idle" }
   | { kind: "optional"; payload: AndroidVersionCheckResult }
   | { kind: "required"; payload: AndroidVersionCheckResult };
+
+function UpdateActionButton(props: {
+  label: string;
+  onPress: () => void;
+  backgroundColor: string;
+  textColor?: string;
+  loading?: boolean;
+}) {
+  const { label, onPress, backgroundColor, textColor = "#FFFFFF", loading } = props;
+
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      disabled={loading}
+      style={{
+        height: 58,
+        borderRadius: 18,
+        backgroundColor,
+        alignItems: "center",
+        justifyContent: "center",
+        opacity: loading ? 0.7 : 1,
+      }}
+    >
+      <Text
+        style={{
+          fontSize: 17,
+          lineHeight: 22,
+          color: textColor,
+          fontFamily: "Figtree_700Bold",
+        }}
+      >
+        {loading ? "Opening..." : label}
+      </Text>
+    </TouchableOpacity>
+  );
+}
 
 export function AppUpdateGate() {
   const { userType } = useAuth();
@@ -238,15 +275,14 @@ export function AppUpdateGate() {
           </View>
 
           <View style={{ gap: 12 }}>
-            <Button
+            <UpdateActionButton
+              label="Update Now"
+              backgroundColor={brandColor}
+              loading={isOpeningStore}
               onPress={() => {
                 void openPlayStore();
               }}
-              loading={isOpeningStore}
-              className="rounded-2xl"
-            >
-              Update Now
-            </Button>
+            />
             <Text
               style={{
                 fontSize: 12,
@@ -338,18 +374,19 @@ export function AppUpdateGate() {
           </View>
 
           <View style={{ gap: 10 }}>
-            <Button
+            <UpdateActionButton
+              label="Update Now"
+              backgroundColor={brandColor}
+              loading={isOpeningStore}
               onPress={() => {
                 void openPlayStore();
               }}
-              loading={isOpeningStore}
-              className="rounded-2xl"
-            >
-              Update Now
-            </Button>
-            <Button onPress={handleSkip} variant="secondary" className="rounded-2xl">
-              Skip for now
-            </Button>
+            />
+            <UpdateActionButton
+              label="Skip for now"
+              backgroundColor={SECONDARY_BUTTON_BG}
+              onPress={handleSkip}
+            />
           </View>
         </Pressable>
       </Pressable>
