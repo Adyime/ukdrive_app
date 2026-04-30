@@ -1,4 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   AppState,
   BackHandler,
@@ -39,7 +45,13 @@ function UpdateActionButton(props: {
   textColor?: string;
   loading?: boolean;
 }) {
-  const { label, onPress, backgroundColor, textColor = "#FFFFFF", loading } = props;
+  const {
+    label,
+    onPress,
+    backgroundColor,
+    textColor = "#FFFFFF",
+    loading,
+  } = props;
 
   return (
     <TouchableOpacity
@@ -76,7 +88,8 @@ export function AppUpdateGate() {
   const isCheckingRef = useRef(false);
 
   const brandColor = userType === "driver" ? BRAND_PURPLE : BRAND_ORANGE;
-  const softColor = userType === "driver" ? BRAND_PURPLE_SOFT : BRAND_ORANGE_SOFT;
+  const softColor =
+    userType === "driver" ? BRAND_PURPLE_SOFT : BRAND_ORANGE_SOFT;
 
   const checkForAndroidUpdate = useCallback(async () => {
     if (Platform.OS !== "android") return;
@@ -234,7 +247,8 @@ export function AppUpdateGate() {
                   fontFamily: "Figtree_400Regular",
                 }}
               >
-                This version of UK Drive is no longer supported. Update now to continue using the app.
+                This version of UK Drive is no longer supported. Update now to
+                continue using the app.
               </Text>
             </View>
 
@@ -248,16 +262,40 @@ export function AppUpdateGate() {
                 gap: 8,
               }}
             >
-              <Text style={{ fontSize: 13, color: "#6B7280", fontFamily: "Figtree_500Medium" }}>
+              <Text
+                style={{
+                  fontSize: 13,
+                  color: "#6B7280",
+                  fontFamily: "Figtree_500Medium",
+                }}
+              >
                 Installed version code
               </Text>
-              <Text style={{ fontSize: 22, color: "#111827", fontFamily: "Figtree_700Bold" }}>
+              <Text
+                style={{
+                  fontSize: 22,
+                  color: "#111827",
+                  fontFamily: "Figtree_700Bold",
+                }}
+              >
                 {String(gateState.payload.installedVersionCode)}
               </Text>
-              <Text style={{ fontSize: 13, color: "#6B7280", fontFamily: "Figtree_500Medium" }}>
+              <Text
+                style={{
+                  fontSize: 13,
+                  color: "#6B7280",
+                  fontFamily: "Figtree_500Medium",
+                }}
+              >
                 Minimum required version code
               </Text>
-              <Text style={{ fontSize: 22, color: brandColor, fontFamily: "Figtree_700Bold" }}>
+              <Text
+                style={{
+                  fontSize: 22,
+                  color: brandColor,
+                  fontFamily: "Figtree_700Bold",
+                }}
+              >
                 {String(gateState.payload.minimumRequiredVersionCode)}
               </Text>
             </View>
@@ -340,25 +378,8 @@ export function AppUpdateGate() {
                 fontFamily: "Figtree_400Regular",
               }}
             >
-              A newer version of UK Drive is available. Update now for the latest improvements and fixes.
-            </Text>
-          </View>
-
-          <View
-            style={{
-              borderRadius: 20,
-              backgroundColor: "#F9FAFB",
-              borderWidth: 1,
-              borderColor: "#E5E7EB",
-              padding: 16,
-              gap: 8,
-            }}
-          >
-            <Text style={{ fontSize: 13, color: "#6B7280", fontFamily: "Figtree_500Medium" }}>
-              Installed version code: {String(gateState.payload.installedVersionCode)}
-            </Text>
-            <Text style={{ fontSize: 13, color: "#6B7280", fontFamily: "Figtree_500Medium" }}>
-              Latest version code: {String(gateState.payload.latestVersionCode)}
+              A newer version of UK Drive is available. Update now for the
+              latest improvements and fixes.
             </Text>
           </View>
 
