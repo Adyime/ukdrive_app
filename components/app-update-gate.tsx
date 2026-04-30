@@ -24,7 +24,6 @@ const BRAND_ORANGE = "#F36D14";
 const BRAND_ORANGE_SOFT = "#FFF0E8";
 const BRAND_PURPLE = "#843FE3";
 const BRAND_PURPLE_SOFT = "#F3EEFE";
-const SECONDARY_BUTTON_BG = "#424B60";
 const PLAY_STORE_FALLBACK_URL =
   "https://play.google.com/store/apps/details?id=com.wnapp.id1755261066753";
 
@@ -73,7 +72,6 @@ export function AppUpdateGate() {
   const { userType } = useAuth();
   const [gateState, setGateState] = useState<GateState>({ kind: "idle" });
   const [isOpeningStore, setIsOpeningStore] = useState(false);
-  const skippedLatestVersionCodeRef = useRef<number | null>(null);
   const lastCheckAtRef = useRef(0);
   const isCheckingRef = useRef(false);
 
@@ -101,21 +99,15 @@ export function AppUpdateGate() {
       );
 
       if (result.status === "required") {
-        skippedLatestVersionCodeRef.current = null;
         setGateState({ kind: "required", payload: result });
         return;
       }
 
       if (result.status === "optional") {
-        if (skippedLatestVersionCodeRef.current === result.latestVersionCode) {
-          return;
-        }
-
         setGateState({ kind: "optional", payload: result });
         return;
       }
 
-      skippedLatestVersionCodeRef.current = null;
       setGateState({ kind: "idle" });
     } catch (error) {
       console.warn("[AppUpdateGate] Version check failed:", error);
@@ -145,7 +137,10 @@ export function AppUpdateGate() {
   }, [checkForAndroidUpdate]);
 
   useEffect(() => {
-    if (gateState.kind !== "required" || Platform.OS !== "android") {
+    if (
+      (gateState.kind !== "required" && gateState.kind !== "optional") ||
+      Platform.OS !== "android"
+    ) {
       return;
     }
 
@@ -180,12 +175,6 @@ export function AppUpdateGate() {
       setIsOpeningStore(false);
     }
   }, [gateState, storeUrl]);
-
-  const handleSkip = useCallback(() => {
-    if (gateState.kind !== "optional") return;
-    skippedLatestVersionCodeRef.current = gateState.payload.latestVersionCode;
-    setGateState({ kind: "idle" });
-  }, [gateState]);
 
   if (Platform.OS !== "android" || gateState.kind === "idle") {
     return null;
@@ -301,7 +290,7 @@ export function AppUpdateGate() {
   }
 
   return (
-    <Modal animationType="fade" transparent visible onRequestClose={handleSkip}>
+    <Modal animationType="fade" transparent visible onRequestClose={() => {}}>
       <Pressable
         style={{
           flex: 1,
@@ -381,11 +370,6 @@ export function AppUpdateGate() {
               onPress={() => {
                 void openPlayStore();
               }}
-            />
-            <UpdateActionButton
-              label="Skip for now"
-              backgroundColor={SECONDARY_BUTTON_BG}
-              onPress={handleSkip}
             />
           </View>
         </Pressable>
