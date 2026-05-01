@@ -15,8 +15,9 @@
 import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
 import { AppState, Platform } from 'react-native';
+import { API_BASE_URL } from '@/lib/api';
 import { updateDriverLocation } from '@/lib/api/driver';
-import { getTokens } from '@/lib/storage';
+import { getTokens, saveTokens } from '@/lib/storage';
 import {
   recordBackgroundPublishAttempt,
   recordBackgroundPublishFailure,
@@ -29,14 +30,20 @@ import {
   recordDriverServiceStatus,
   recordDriverServiceStopped,
 } from '@/lib/services/driver-location-diagnostics';
+import {
+  getNativeDriverLocationServiceStatus,
+  isNativeDriverLocationServiceAvailable,
+  startNativeDriverLocationService,
+  stopNativeDriverLocationService,
+} from '@/lib/services/native-driver-location-service';
 
 // Task name for the background location task
 export const DRIVER_LOCATION_TASK = 'DRIVER_LOCATION_TASK';
 
 // Configuration
 const LOCATION_UPDATE_INTERVAL = 10000; // 10 seconds
-const LOCATION_DISTANCE_INTERVAL = 10; // 10 meters minimum movement
-const LOCATION_ACCURACY = Location.Accuracy.Balanced; // Good accuracy with reasonable battery
+const LOCATION_DISTANCE_INTERVAL = 0; // Heartbeat should not depend on movement
+const LOCATION_ACCURACY = Location.Accuracy.Highest; // Prefer timely background callbacks
 
 // State tracking
 let isServiceRunning = false;
@@ -44,6 +51,62 @@ let lastUpdateTime = 0;
 const MIN_UPDATE_INTERVAL_MS = 10000; // Minimum 10 seconds between server updates
 const SERVICE_STATUS_CACHE_MS = 5000;
 let lastServiceStatusCheckAt = 0;
+
+async function syncNativeServiceTokens(): Promise<void> {
+  if (Platform.OS !== "android" || !isNativeDriverLocationServiceAvailable()) {
+    return;
+  }
+
+  try {
+    const [nativeStatus, storedTokens] = await Promise.all([
+      getNativeDriverLocationServiceStatus(),
+      getTokens(),
+    ]);
+
+    if (
+      !nativeStatus?.accessToken ||
+      !nativeStatus?.refreshToken ||
+      !storedTokens ||
+      storedTokens.userType !== "driver"
+    ) {
+      return;
+    }
+
+    const needsSync =
+      storedTokens.accessToken !== nativeStatus.accessToken ||
+      storedTokens.refreshToken !== nativeStatus.refreshToken;
+
+    if (!needsSync) {
+      return;
+    }
+
+    await saveTokens(
+      nativeStatus.accessToken,
+      nativeStatus.refreshToken,
+      storedTokens.userType,
+      storedTokens.userId,
+      storedTokens.userProfile
+    );
+  } catch (error) {
+    console.warn(
+      "[DriverForegroundService] Failed to sync native driver-service tokens:",
+      error
+    );
+  }
+}
+
+async function stopExpoBackgroundTaskIfRunning(): Promise<void> {
+  try {
+    const isRunning = await Location.hasStartedLocationUpdatesAsync(
+      DRIVER_LOCATION_TASK
+    );
+    if (isRunning) {
+      await Location.stopLocationUpdatesAsync(DRIVER_LOCATION_TASK);
+    }
+  } catch {
+    // Ignore - Expo task may not be registered in this build path.
+  }
+}
 
 async function getRegisteredTaskNames(): Promise<string[]> {
   try {
@@ -168,6 +231,10 @@ export async function isBackgroundLocationAvailable(): Promise<boolean> {
     return false;
   }
 
+  if (Platform.OS === "android" && isNativeDriverLocationServiceAvailable()) {
+    return true;
+  }
+
   // Check if the task is defined
   const isTaskDefined = await TaskManager.isTaskDefined(DRIVER_LOCATION_TASK);
   if (!isTaskDefined) {
@@ -194,12 +261,9 @@ export async function requestBackgroundLocationPermissions(): Promise<boolean> {
     const backgroundStatus = await Location.requestBackgroundPermissionsAsync();
     if (backgroundStatus.status !== 'granted') {
       console.warn('[DriverForegroundService] Background location permission denied');
-      if (Platform.OS === 'ios') {
-        // iOS requires "Always" access for reliable background tracking.
-        return false;
-      }
-      // Some Android variants allow startup and prompt upgrade later.
-      return true;
+      // Android and iOS both need a real background grant for
+      // minimized / screen-off driver tracking to continue.
+      return false;
     }
 
     return true;
@@ -278,6 +342,43 @@ export async function startDriverService(): Promise<boolean> {
       return false;
     }
 
+    if (Platform.OS === "android" && isNativeDriverLocationServiceAvailable()) {
+      const tokens = await getTokens();
+      if (!tokens?.accessToken || !tokens?.refreshToken || tokens.userType !== "driver") {
+        await recordDriverServiceStartResult({
+          result: "no_driver_session",
+          errorMessage: "A logged-in driver session is required before starting Android tracking.",
+          registeredTaskNames: registeredTaskNamesBeforeStart,
+          taskDefinitionKnown,
+          isRunning: false,
+        });
+        return false;
+      }
+
+      const nativeStarted = await startNativeDriverLocationService({
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
+        baseUrl: API_BASE_URL,
+        notificationTitle: "UK Drive - Available",
+        notificationBody: "You are available for ride requests",
+      });
+
+      if (nativeStarted) {
+        await stopExpoBackgroundTaskIfRunning();
+        isServiceRunning = true;
+        lastUpdateTime = 0;
+        lastServiceStatusCheckAt = Date.now();
+        await recordDriverServiceStartResult({
+          result: "started_native_android_service",
+          registeredTaskNames: registeredTaskNamesBeforeStart,
+          taskDefinitionKnown,
+          isRunning: true,
+        });
+        console.log("[DriverForegroundService] Native Android tracking service started");
+        return true;
+      }
+    }
+
     // Check if already running (in case of app restart)
     const isAlreadyRunning = await Location.hasStartedLocationUpdatesAsync(DRIVER_LOCATION_TASK);
     if (isAlreadyRunning) {
@@ -298,8 +399,6 @@ export async function startDriverService(): Promise<boolean> {
       accuracy: LOCATION_ACCURACY,
       timeInterval: LOCATION_UPDATE_INTERVAL,
       distanceInterval: LOCATION_DISTANCE_INTERVAL,
-      deferredUpdatesInterval: LOCATION_UPDATE_INTERVAL,
-      deferredUpdatesDistance: LOCATION_DISTANCE_INTERVAL,
 
       // Android foreground service configuration
       foregroundService: {
@@ -353,6 +452,17 @@ export async function startDriverService(): Promise<boolean> {
  * @returns true if service stopped successfully, false otherwise
  */
 export async function stopDriverService(): Promise<boolean> {
+  if (Platform.OS === "android" && isNativeDriverLocationServiceAvailable()) {
+    try {
+      await stopNativeDriverLocationService();
+    } catch (error) {
+      console.warn(
+        "[DriverForegroundService] Failed stopping native Android tracking service:",
+        error
+      );
+    }
+  }
+
   if (!isServiceRunning) {
     // Check if it's running anyway (in case state got out of sync)
     try {
@@ -371,7 +481,7 @@ export async function stopDriverService(): Promise<boolean> {
 
   try {
     // Stop location updates
-    await Location.stopLocationUpdatesAsync(DRIVER_LOCATION_TASK);
+    await stopExpoBackgroundTaskIfRunning();
 
     isServiceRunning = false;
     lastServiceStatusCheckAt = Date.now();
@@ -412,12 +522,25 @@ export async function getDriverServiceStatus(): Promise<{
   isLocationEnabled: boolean;
 }> {
   try {
+    await syncNativeServiceTokens();
+
     // Check actual running state
     let actuallyRunning = false;
-    try {
-      actuallyRunning = await Location.hasStartedLocationUpdatesAsync(DRIVER_LOCATION_TASK);
-    } catch {
-      actuallyRunning = false;
+    if (Platform.OS === "android" && isNativeDriverLocationServiceAvailable()) {
+      try {
+        const nativeStatus = await getNativeDriverLocationServiceStatus();
+        actuallyRunning = !!nativeStatus?.isRunning;
+      } catch {
+        actuallyRunning = false;
+      }
+    }
+
+    if (!actuallyRunning) {
+      try {
+        actuallyRunning = await Location.hasStartedLocationUpdatesAsync(DRIVER_LOCATION_TASK);
+      } catch {
+        actuallyRunning = false;
+      }
     }
 
     // Sync internal state
@@ -436,8 +559,7 @@ export async function getDriverServiceStatus(): Promise<{
     const hasForegroundPermission = foregroundPerm.status === 'granted';
     const hasBackgroundPermission = backgroundPerm.status === 'granted';
     const hasPermissions =
-      hasForegroundPermission &&
-      (Platform.OS === 'ios' ? hasBackgroundPermission : true);
+      hasForegroundPermission && hasBackgroundPermission;
 
     // Check location services
     const isLocationEnabled = await Location.hasServicesEnabledAsync();
@@ -486,7 +608,6 @@ export async function getDriverServiceStatus(): Promise<{
  */
 export async function shouldPublishFromForegroundWatcher(): Promise<boolean> {
   if (Platform.OS === "web") return true;
-  if (AppState.currentState === "active") return true;
 
   const now = Date.now();
   if (
@@ -498,9 +619,20 @@ export async function shouldPublishFromForegroundWatcher(): Promise<boolean> {
   lastServiceStatusCheckAt = now;
 
   try {
-    const running = await Location.hasStartedLocationUpdatesAsync(
-      DRIVER_LOCATION_TASK
-    );
+    await syncNativeServiceTokens();
+
+    let running = false;
+    if (Platform.OS === "android" && isNativeDriverLocationServiceAvailable()) {
+      const nativeStatus = await getNativeDriverLocationServiceStatus();
+      running = !!nativeStatus?.isRunning;
+    }
+
+    if (!running) {
+      running = await Location.hasStartedLocationUpdatesAsync(
+        DRIVER_LOCATION_TASK
+      );
+    }
+
     isServiceRunning = running;
     if (!running) {
       await recordDriverServiceExpectedRunningButStopped(

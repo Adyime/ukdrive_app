@@ -13,7 +13,7 @@ import { dispatchUnauthorized, dispatchTokenRefreshed } from './events';
 import { refreshTokens } from './api/token-refresh';
 import { getTokens, saveTokens } from './storage';
 
-const API_BASE_URL = (process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000').replace(/\/+$/, '');
+export const API_BASE_URL = (process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000').replace(/\/+$/, '');
 
 // Log API URL in development
 if (__DEV__) {
