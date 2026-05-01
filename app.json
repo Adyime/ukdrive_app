@@ -97,6 +97,7 @@
       ],
       "./plugins/withAndroidRideRequestSound",
       "./plugins/withRideRequestFullScreenIntent",
+      "./plugins/withNativeDriverLocationService",
       [
         "expo-image-picker",
         {

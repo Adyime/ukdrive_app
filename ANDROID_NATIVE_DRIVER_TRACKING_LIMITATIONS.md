@@ -5,6 +5,7 @@ This app now has a native Android foreground location service for driver trackin
 What it improves:
 - When a driver is online, Android can keep location tracking alive more reliably while the app is minimized.
 - Screen-off behavior is usually better than the Expo background-task path because tracking is anchored to a native foreground service and notification.
+- Native Android code is generated during prebuild by `plugins/withNativeDriverLocationService.js`; the checked-in JS calls this service only on Android and keeps the existing foreground watcher as an app-open fallback.
 
 What is still not guaranteed:
 - If the app is removed from recents, Android may still stop or delay the service on some devices.

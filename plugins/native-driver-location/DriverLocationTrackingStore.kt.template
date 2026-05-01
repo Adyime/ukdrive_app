@@ -1,0 +1,197 @@
+package __PACKAGE__
+
+import android.content.Context
+import android.content.SharedPreferences
+import android.util.Log
+
+data class DriverLocationServiceConfig(
+    val accessToken: String,
+    val refreshToken: String,
+    val baseUrl: String,
+    val notificationTitle: String,
+    val notificationBody: String,
+)
+
+object DriverLocationTrackingStore {
+    private const val PREFS_NAME = "driver_location_native_service"
+    private const val KEY_ACCESS_TOKEN = "access_token"
+    private const val KEY_REFRESH_TOKEN = "refresh_token"
+    private const val KEY_BASE_URL = "base_url"
+    private const val KEY_NOTIFICATION_TITLE = "notification_title"
+    private const val KEY_NOTIFICATION_BODY = "notification_body"
+    private const val KEY_ENABLED = "enabled"
+    private const val KEY_RUNNING = "running"
+    private const val KEY_LAST_START_AT = "last_start_at"
+    private const val KEY_LAST_STOP_AT = "last_stop_at"
+    private const val KEY_LAST_LOCATION_AT = "last_location_at"
+    private const val KEY_LAST_POST_ATTEMPT_AT = "last_post_attempt_at"
+    private const val KEY_LAST_POST_SUCCESS_AT = "last_post_success_at"
+    private const val KEY_LAST_ERROR = "last_error"
+    private const val KEY_LAST_EVENT = "last_event"
+    private const val KEY_LAST_EVENT_AT = "last_event_at"
+    private const val KEY_LAST_HTTP_STATUS = "last_http_status"
+    private const val KEY_LAST_LATITUDE = "last_latitude"
+    private const val KEY_LAST_LONGITUDE = "last_longitude"
+
+    private fun prefs(context: Context): SharedPreferences =
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+    fun saveConfig(
+        context: Context,
+        accessToken: String,
+        refreshToken: String,
+        baseUrl: String,
+        notificationTitle: String,
+        notificationBody: String,
+    ) {
+        prefs(context).edit()
+            .putString(KEY_ACCESS_TOKEN, accessToken)
+            .putString(KEY_REFRESH_TOKEN, refreshToken)
+            .putString(KEY_BASE_URL, baseUrl.trimEnd('/'))
+            .putString(KEY_NOTIFICATION_TITLE, notificationTitle)
+            .putString(KEY_NOTIFICATION_BODY, notificationBody)
+            .putBoolean(KEY_ENABLED, true)
+            .apply()
+    }
+
+    fun getConfig(context: Context): DriverLocationServiceConfig? {
+        val prefs = prefs(context)
+        val accessToken = prefs.getString(KEY_ACCESS_TOKEN, null)
+        val refreshToken = prefs.getString(KEY_REFRESH_TOKEN, null)
+        val baseUrl = prefs.getString(KEY_BASE_URL, null)
+
+        if (accessToken.isNullOrBlank() || refreshToken.isNullOrBlank() || baseUrl.isNullOrBlank()) {
+            return null
+        }
+
+        return DriverLocationServiceConfig(
+            accessToken = accessToken,
+            refreshToken = refreshToken,
+            baseUrl = baseUrl,
+            notificationTitle = prefs.getString(KEY_NOTIFICATION_TITLE, "UK Drive - Available")
+                ?: "UK Drive - Available",
+            notificationBody = prefs.getString(
+                KEY_NOTIFICATION_BODY,
+                "You are available for ride requests"
+            ) ?: "You are available for ride requests",
+        )
+    }
+
+    fun clearConfig(context: Context) {
+        prefs(context).edit()
+            .remove(KEY_ACCESS_TOKEN)
+            .remove(KEY_REFRESH_TOKEN)
+            .remove(KEY_BASE_URL)
+            .remove(KEY_NOTIFICATION_TITLE)
+            .remove(KEY_NOTIFICATION_BODY)
+            .putBoolean(KEY_ENABLED, false)
+            .putBoolean(KEY_RUNNING, false)
+            .apply()
+    }
+
+    fun isEnabled(context: Context): Boolean = prefs(context).getBoolean(KEY_ENABLED, false)
+
+    fun setEnabled(context: Context, enabled: Boolean) {
+        prefs(context).edit().putBoolean(KEY_ENABLED, enabled).apply()
+    }
+
+    fun setRunning(context: Context, running: Boolean) {
+        prefs(context).edit().putBoolean(KEY_RUNNING, running).apply()
+    }
+
+    fun recordStart(context: Context, message: String) {
+        prefs(context).edit()
+            .putLong(KEY_LAST_START_AT, System.currentTimeMillis())
+            .remove(KEY_LAST_ERROR)
+            .apply()
+        recordEvent(context, message)
+    }
+
+    fun recordStop(context: Context, message: String) {
+        prefs(context).edit()
+            .putLong(KEY_LAST_STOP_AT, System.currentTimeMillis())
+            .apply()
+        recordEvent(context, message)
+    }
+
+    fun recordLocationCallback(context: Context, latitude: Double, longitude: Double) {
+        prefs(context).edit()
+            .putLong(KEY_LAST_LOCATION_AT, System.currentTimeMillis())
+            .putString(KEY_LAST_LATITUDE, latitude.toString())
+            .putString(KEY_LAST_LONGITUDE, longitude.toString())
+            .apply()
+        recordEvent(context, "Location callback received")
+    }
+
+    fun recordPostAttempt(context: Context) {
+        prefs(context).edit()
+            .putLong(KEY_LAST_POST_ATTEMPT_AT, System.currentTimeMillis())
+            .apply()
+        recordEvent(context, "API request started: POST /api/driver/location")
+    }
+
+    fun recordPostSuccess(context: Context, httpStatus: Int) {
+        prefs(context).edit()
+            .putLong(KEY_LAST_POST_SUCCESS_AT, System.currentTimeMillis())
+            .putInt(KEY_LAST_HTTP_STATUS, httpStatus)
+            .remove(KEY_LAST_ERROR)
+            .apply()
+        recordEvent(context, "API success: location POST succeeded ($httpStatus)")
+    }
+
+    fun recordFailure(context: Context, message: String, httpStatus: Int? = null) {
+        val editor = prefs(context).edit()
+            .putString(KEY_LAST_ERROR, message)
+        if (httpStatus != null) {
+            editor.putInt(KEY_LAST_HTTP_STATUS, httpStatus)
+        }
+        editor.apply()
+        recordEvent(context, message)
+    }
+
+    fun recordPermissionFailure(context: Context, message: String) {
+        recordFailure(context, "Permission failure: $message")
+    }
+
+    fun updateTokens(context: Context, accessToken: String, refreshToken: String) {
+        prefs(context).edit()
+            .putString(KEY_ACCESS_TOKEN, accessToken)
+            .putString(KEY_REFRESH_TOKEN, refreshToken)
+            .apply()
+        recordEvent(context, "Driver service tokens refreshed")
+    }
+
+    fun snapshot(context: Context): Map<String, Any?> {
+        val prefs = prefs(context)
+        return mapOf(
+            "isEnabled" to prefs.getBoolean(KEY_ENABLED, false),
+            "isRunning" to prefs.getBoolean(KEY_RUNNING, false),
+            "baseUrl" to prefs.getString(KEY_BASE_URL, null),
+            "accessToken" to prefs.getString(KEY_ACCESS_TOKEN, null),
+            "refreshToken" to prefs.getString(KEY_REFRESH_TOKEN, null),
+            "lastStartAt" to getLongOrNull(prefs, KEY_LAST_START_AT),
+            "lastStopAt" to getLongOrNull(prefs, KEY_LAST_STOP_AT),
+            "lastLocationAt" to getLongOrNull(prefs, KEY_LAST_LOCATION_AT),
+            "lastPostAttemptAt" to getLongOrNull(prefs, KEY_LAST_POST_ATTEMPT_AT),
+            "lastPostSuccessAt" to getLongOrNull(prefs, KEY_LAST_POST_SUCCESS_AT),
+            "lastError" to prefs.getString(KEY_LAST_ERROR, null),
+            "lastEvent" to prefs.getString(KEY_LAST_EVENT, null),
+            "lastEventAt" to getLongOrNull(prefs, KEY_LAST_EVENT_AT),
+            "lastHttpStatus" to if (prefs.contains(KEY_LAST_HTTP_STATUS)) prefs.getInt(KEY_LAST_HTTP_STATUS, 0) else null,
+            "lastLatitude" to prefs.getString(KEY_LAST_LATITUDE, null)?.toDoubleOrNull(),
+            "lastLongitude" to prefs.getString(KEY_LAST_LONGITUDE, null)?.toDoubleOrNull(),
+        )
+    }
+
+    private fun getLongOrNull(prefs: SharedPreferences, key: String): Long? {
+        return if (prefs.contains(key)) prefs.getLong(key, 0L) else null
+    }
+
+    private fun recordEvent(context: Context, message: String) {
+        Log.d("DriverLocationService", message)
+        prefs(context).edit()
+            .putString(KEY_LAST_EVENT, message)
+            .putLong(KEY_LAST_EVENT_AT, System.currentTimeMillis())
+            .apply()
+    }
+}

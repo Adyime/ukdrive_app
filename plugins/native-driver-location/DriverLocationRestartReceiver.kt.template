@@ -1,0 +1,38 @@
+package __PACKAGE__
+
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import androidx.core.content.ContextCompat
+
+class DriverLocationRestartReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent?) {
+        if (!DriverLocationTrackingStore.isEnabled(context)) {
+            return
+        }
+
+        val config = DriverLocationTrackingStore.getConfig(context) ?: return
+        val serviceIntent = Intent(context, DriverLocationForegroundService::class.java).apply {
+            action = DriverLocationForegroundService.ACTION_START
+            putExtra(DriverLocationForegroundService.EXTRA_ACCESS_TOKEN, config.accessToken)
+            putExtra(DriverLocationForegroundService.EXTRA_REFRESH_TOKEN, config.refreshToken)
+            putExtra(DriverLocationForegroundService.EXTRA_BASE_URL, config.baseUrl)
+            putExtra(DriverLocationForegroundService.EXTRA_NOTIFICATION_TITLE, config.notificationTitle)
+            putExtra(DriverLocationForegroundService.EXTRA_NOTIFICATION_BODY, config.notificationBody)
+        }
+
+        DriverLocationTrackingStore.recordFailure(
+            context,
+            "Restart receiver attempting best-effort driver location service revival"
+        )
+
+        try {
+            ContextCompat.startForegroundService(context, serviceIntent)
+        } catch (error: Throwable) {
+            DriverLocationTrackingStore.recordFailure(
+                context,
+                "Restart receiver could not revive driver location service: ${error.message}"
+            )
+        }
+    }
+}
