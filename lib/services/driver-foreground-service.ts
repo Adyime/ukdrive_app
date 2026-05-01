@@ -14,7 +14,7 @@
 
 import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
-import { Platform } from 'react-native';
+import { AppState, Platform } from 'react-native';
 import { updateDriverLocation } from '@/lib/api/driver';
 import { getTokens } from '@/lib/storage';
 import {
@@ -486,6 +486,7 @@ export async function getDriverServiceStatus(): Promise<{
  */
 export async function shouldPublishFromForegroundWatcher(): Promise<boolean> {
   if (Platform.OS === "web") return true;
+  if (AppState.currentState === "active") return true;
 
   const now = Date.now();
   if (
