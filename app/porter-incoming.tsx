@@ -26,6 +26,7 @@ import {
   markIncomingPorterHandled,
 } from "@/lib/incoming-porter-request";
 import { stopNativeIncomingAlertSound } from "@/lib/incoming-request-sound";
+import { recordKeepAwakeDiagnostic } from "@/lib/services/driver-location-diagnostics";
 
 const COUNTDOWN_SECONDS = 18;
 const BRAND_PURPLE = "#843FE3";
@@ -207,10 +208,20 @@ export default function PorterIncomingScreen() {
           return;
         }
         soundRef.current = sound;
-      } catch {
-        // Ringtone optional.
-      }
-    })();
+        } catch (error) {
+          const message =
+            error instanceof Error
+              ? error.message
+              : "Failed to start incoming porter ringtone.";
+          if (message.toLowerCase().includes("keep awake")) {
+            await recordKeepAwakeDiagnostic(
+              "porter-incoming:ringtone-start",
+              message
+            );
+          }
+          console.warn("[PorterIncoming] Failed to start ringtone:", message);
+        }
+      })();
 
     return () => {
       cancelled = true;

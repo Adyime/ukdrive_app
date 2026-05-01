@@ -13,6 +13,7 @@ import {
 } from "react";
 import {
   Animated,
+  AppState,
   Keyboard,
   Linking,
   LogBox,
@@ -45,6 +46,10 @@ import {
   toIncomingRideRouteParams,
 } from "@/lib/incoming-ride-request";
 import { initializeOneSignal } from "@/lib/services/onesignal";
+import {
+  recordDriverLocationAppState,
+  recordDriverLocationVisibleRoute,
+} from "@/lib/services/driver-location-diagnostics";
 import {
   useFonts,
   Figtree_300Light,
@@ -104,6 +109,7 @@ function RootLayoutNav() {
   const segments = useSegments();
   const router = useRouter();
   const initialUrlHandled = useRef(false);
+  const routePath = segments.join("/") || "root";
 
   useEffect(() => {
     if (isLoading) return;
@@ -122,6 +128,22 @@ function RootLayoutNav() {
       router.replace("/(tabs)" as any);
     }
   }, [isAuthenticated, isLoading, segments, router]);
+
+  useEffect(() => {
+    void recordDriverLocationVisibleRoute(routePath);
+  }, [routePath]);
+
+  useEffect(() => {
+    void recordDriverLocationAppState(AppState.currentState, routePath);
+
+    const subscription = AppState.addEventListener("change", (nextState) => {
+      void recordDriverLocationAppState(nextState, routePath);
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [routePath]);
 
   // Open ride-incoming when app is opened via deep link (full-screen intent or notification tap)
   useEffect(() => {

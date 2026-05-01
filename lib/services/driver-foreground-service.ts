@@ -17,6 +17,18 @@ import * as TaskManager from 'expo-task-manager';
 import { Platform } from 'react-native';
 import { updateDriverLocation } from '@/lib/api/driver';
 import { getTokens } from '@/lib/storage';
+import {
+  recordBackgroundPublishAttempt,
+  recordBackgroundPublishFailure,
+  recordBackgroundPublishSuccess,
+  recordBackgroundTaskAuthCheck,
+  recordBackgroundTaskInvocation,
+  recordDriverServiceExpectedRunningButStopped,
+  recordDriverServiceStartAttempt,
+  recordDriverServiceStartResult,
+  recordDriverServiceStatus,
+  recordDriverServiceStopped,
+} from '@/lib/services/driver-location-diagnostics';
 
 // Task name for the background location task
 export const DRIVER_LOCATION_TASK = 'DRIVER_LOCATION_TASK';
@@ -33,6 +45,21 @@ const MIN_UPDATE_INTERVAL_MS = 10000; // Minimum 10 seconds between server updat
 const SERVICE_STATUS_CACHE_MS = 5000;
 let lastServiceStatusCheckAt = 0;
 
+async function getRegisteredTaskNames(): Promise<string[]> {
+  try {
+    const registeredTasks = await TaskManager.getRegisteredTasksAsync();
+    return registeredTasks
+      .map((task) => task.taskName)
+      .filter((taskName): taskName is string => typeof taskName === "string");
+  } catch (error) {
+    console.warn(
+      "[DriverForegroundService] Failed to read registered tasks:",
+      error
+    );
+    return [];
+  }
+}
+
 /**
  * Define the background location task
  * This must be called at the top level (outside of components) for it to work
@@ -40,6 +67,10 @@ let lastServiceStatusCheckAt = 0;
 TaskManager.defineTask(DRIVER_LOCATION_TASK, async ({ data, error }) => {
   if (error) {
     console.error('[DriverForegroundService] Task error:', error);
+    await recordBackgroundPublishFailure(
+      "TASK_ERROR",
+      error.message || "Background task error"
+    );
     return;
   }
 
@@ -50,6 +81,7 @@ TaskManager.defineTask(DRIVER_LOCATION_TASK, async ({ data, error }) => {
       // Get the most recent location
       const location = locations[locations.length - 1];
       const { latitude, longitude } = location.coords;
+      await recordBackgroundTaskInvocation(latitude, longitude);
 
       // Throttle server updates
       const now = Date.now();
@@ -61,27 +93,60 @@ TaskManager.defineTask(DRIVER_LOCATION_TASK, async ({ data, error }) => {
       // Check if user is authenticated before attempting to update location
       try {
         const tokens = await getTokens();
+        const hasDriverSession =
+          !!tokens?.accessToken && tokens.userType === "driver";
+        await recordBackgroundTaskAuthCheck({
+          hasDriverSession,
+          hasAccessToken: !!tokens?.accessToken,
+        });
         if (!tokens?.accessToken || tokens.userType !== 'driver') {
           // User is not authenticated as a driver, skip location update
           // This can happen if the user logged out or is not logged in
+          await recordBackgroundPublishFailure(
+            "NO_DRIVER_SESSION",
+            "Background task could not find a logged-in driver session."
+          );
           return;
         }
-      } catch {
+      } catch (error) {
         // If we can't check tokens, skip the update to avoid errors
         console.warn('[DriverForegroundService] Could not verify authentication, skipping update');
+        await recordBackgroundTaskAuthCheck({
+          hasDriverSession: false,
+          hasAccessToken: false,
+          errorMessage:
+            error instanceof Error
+              ? error.message
+              : "Failed to verify stored driver tokens.",
+        });
         return;
       }
 
       try {
+        await recordBackgroundPublishAttempt(latitude, longitude);
         const response = await updateDriverLocation(latitude, longitude);
         if (!response.success) {
+          await recordBackgroundPublishFailure(
+            response.error?.code ?? "LOCATION_UPDATE_FAILED",
+            response.error?.message ?? "Background task could not publish driver location."
+          );
           // Only log non-auth errors (auth errors are expected if user logged out)
           if (response.error?.code !== 'UNAUTHORIZED' && response.error?.code !== 'SESSION_EXPIRED') {
             console.warn('[DriverForegroundService] Failed to update location:', response.error);
           }
+        } else {
+          await recordBackgroundPublishSuccess(
+            response.data?.location?.updatedAt ?? null
+          );
         }
       } catch (err) {
         console.error('[DriverForegroundService] Error updating location:', err);
+        await recordBackgroundPublishFailure(
+          "TASK_EXCEPTION",
+          err instanceof Error
+            ? err.message
+            : "Background task threw while publishing driver location."
+        );
       }
     }
   }
@@ -151,21 +216,51 @@ export async function requestBackgroundLocationPermissions(): Promise<boolean> {
  * @returns true if service started successfully, false otherwise
  */
 export async function startDriverService(): Promise<boolean> {
+  await recordDriverServiceStartAttempt();
+
   if (isServiceRunning) {
     console.log('[DriverForegroundService] Service already running');
+    const [registeredTaskNames, taskDefinitionKnown] = await Promise.all([
+      getRegisteredTaskNames(),
+      Promise.resolve(TaskManager.isTaskDefined(DRIVER_LOCATION_TASK)),
+    ]);
+    await recordDriverServiceStartResult({
+      result: "already_running",
+      registeredTaskNames,
+      taskDefinitionKnown,
+      isRunning: true,
+    });
     return true;
   }
 
   // Web platform doesn't support background location
   if (Platform.OS === 'web') {
     console.warn('[DriverForegroundService] Background location not supported on web');
+    await recordDriverServiceStartResult({
+      result: "web_unsupported",
+      errorMessage: "Background location is not supported on web.",
+      isRunning: false,
+    });
     return false;
   }
 
   try {
+    const [registeredTaskNamesBeforeStart, taskDefinitionKnown] =
+      await Promise.all([
+        getRegisteredTaskNames(),
+        Promise.resolve(TaskManager.isTaskDefined(DRIVER_LOCATION_TASK)),
+      ]);
+
     // Check and request permissions
     const hasPermission = await requestBackgroundLocationPermissions();
     if (!hasPermission) {
+      await recordDriverServiceStartResult({
+        result: "permission_denied",
+        errorMessage: "Background location permission was not granted.",
+        registeredTaskNames: registeredTaskNamesBeforeStart,
+        taskDefinitionKnown,
+        isRunning: false,
+      });
       return false;
     }
 
@@ -173,6 +268,13 @@ export async function startDriverService(): Promise<boolean> {
     const isEnabled = await Location.hasServicesEnabledAsync();
     if (!isEnabled) {
       console.warn('[DriverForegroundService] Location services are disabled');
+      await recordDriverServiceStartResult({
+        result: "location_disabled",
+        errorMessage: "Location services are disabled on the device.",
+        registeredTaskNames: registeredTaskNamesBeforeStart,
+        taskDefinitionKnown,
+        isRunning: false,
+      });
       return false;
     }
 
@@ -182,6 +284,12 @@ export async function startDriverService(): Promise<boolean> {
       console.log('[DriverForegroundService] Task was already running, marking as active');
       isServiceRunning = true;
       lastServiceStatusCheckAt = Date.now();
+      await recordDriverServiceStartResult({
+        result: "already_registered",
+        registeredTaskNames: registeredTaskNamesBeforeStart,
+        taskDefinitionKnown,
+        isRunning: true,
+      });
       return true;
     }
 
@@ -212,12 +320,28 @@ export async function startDriverService(): Promise<boolean> {
     isServiceRunning = true;
     lastUpdateTime = 0; // Reset throttle timer
     lastServiceStatusCheckAt = Date.now();
+    await recordDriverServiceStartResult({
+      result: "started",
+      registeredTaskNames: await getRegisteredTaskNames(),
+      taskDefinitionKnown,
+      isRunning: true,
+    });
     console.log('[DriverForegroundService] Service started successfully');
     return true;
   } catch (error) {
     console.error('[DriverForegroundService] Failed to start service:', error);
     isServiceRunning = false;
     lastServiceStatusCheckAt = Date.now();
+    await recordDriverServiceStartResult({
+      result: "error",
+      errorMessage:
+        error instanceof Error
+          ? error.message
+          : "Failed to start the Android driver tracking service.",
+      registeredTaskNames: await getRegisteredTaskNames(),
+      taskDefinitionKnown: TaskManager.isTaskDefined(DRIVER_LOCATION_TASK),
+      isRunning: false,
+    });
     return false;
   }
 }
@@ -235,10 +359,12 @@ export async function stopDriverService(): Promise<boolean> {
       const isRunning = await Location.hasStartedLocationUpdatesAsync(DRIVER_LOCATION_TASK);
       if (!isRunning) {
         console.log('[DriverForegroundService] Service not running');
+        await recordDriverServiceStopped();
         return true;
       }
     } catch {
       // Task might not exist
+      await recordDriverServiceStopped();
       return true;
     }
   }
@@ -249,6 +375,7 @@ export async function stopDriverService(): Promise<boolean> {
 
     isServiceRunning = false;
     lastServiceStatusCheckAt = Date.now();
+    await recordDriverServiceStopped();
     console.log('[DriverForegroundService] Service stopped successfully');
     return true;
   } catch (error) {
@@ -256,6 +383,7 @@ export async function stopDriverService(): Promise<boolean> {
     // Mark as stopped even if there was an error
     isServiceRunning = false;
     lastServiceStatusCheckAt = Date.now();
+    await recordDriverServiceStopped();
     return false;
   }
 }
@@ -313,6 +441,20 @@ export async function getDriverServiceStatus(): Promise<{
 
     // Check location services
     const isLocationEnabled = await Location.hasServicesEnabledAsync();
+    const [registeredTaskNames, taskDefinitionKnown] = await Promise.all([
+      getRegisteredTaskNames(),
+      Promise.resolve(TaskManager.isTaskDefined(DRIVER_LOCATION_TASK)),
+    ]);
+
+    await recordDriverServiceStatus({
+      isRunning: actuallyRunning,
+      hasPermissions,
+      isLocationEnabled,
+      foregroundPermissionStatus: foregroundPerm.status,
+      backgroundPermissionStatus: backgroundPerm.status,
+      registeredTaskNames,
+      taskDefinitionKnown,
+    });
 
     return {
       isRunning: actuallyRunning,
@@ -321,6 +463,15 @@ export async function getDriverServiceStatus(): Promise<{
     };
   } catch (error) {
     console.error('[DriverForegroundService] Error getting status:', error);
+    await recordDriverServiceStatus({
+      isRunning: false,
+      hasPermissions: false,
+      isLocationEnabled: false,
+      foregroundPermissionStatus: "unknown",
+      backgroundPermissionStatus: "unknown",
+      registeredTaskNames: await getRegisteredTaskNames(),
+      taskDefinitionKnown: TaskManager.isTaskDefined(DRIVER_LOCATION_TASK),
+    });
     return {
       isRunning: false,
       hasPermissions: false,
@@ -350,9 +501,17 @@ export async function shouldPublishFromForegroundWatcher(): Promise<boolean> {
       DRIVER_LOCATION_TASK
     );
     isServiceRunning = running;
+    if (!running) {
+      await recordDriverServiceExpectedRunningButStopped(
+        "foreground_fallback_detected_no_background_task"
+      );
+    }
     return !running;
   } catch {
     // Fail open so we don't lose tracking updates
+    await recordDriverServiceExpectedRunningButStopped(
+      "foreground_fallback_status_check_failed"
+    );
     return true;
   }
 }

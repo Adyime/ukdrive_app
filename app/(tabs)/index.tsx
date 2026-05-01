@@ -96,6 +96,11 @@ import {
   getDriverServiceStatus,
   requestBackgroundLocationPermissions,
 } from "@/lib/services/driver-foreground-service";
+import {
+  getDriverLocationDiagnostics,
+  recordDriverServiceExpectedRunningButStopped,
+  type DriverLocationDiagnosticsSnapshot,
+} from "@/lib/services/driver-location-diagnostics";
 import sedanImage from "@/assets/images/sedan.png";
 import autoImage from "@/assets/images/auto.png";
 import bikeImage from "@/assets/images/bike.png";
@@ -127,6 +132,7 @@ const DRIVER_LOCATION_STALE_THRESHOLD_MS = 10 * 60 * 1000;
 const DRIVER_LOCATION_WATCHDOG_INTERVAL_MS = 60 * 1000;
 const DRIVER_LOCATION_RETRY_DELAYS_MS = [0, 1500, 3000] as const;
 const DRIVER_LOCATION_STALE_POPUP_COOLDOWN_MS = 5 * 60 * 1000;
+const DRIVER_LOCATION_DIAGNOSTICS_REFRESH_INTERVAL_MS = 5000;
 
 type NearbyVehicleMarker = {
   id: string;
@@ -344,6 +350,8 @@ export default function HomeScreen() {
   const [isWalletNegative, setIsWalletNegative] = useState(false);
   const [canGoOnline, setCanGoOnline] = useState(true);
   const [isGpsFresh, setIsGpsFresh] = useState(true);
+  const [locationDiagnostics, setLocationDiagnostics] =
+    useState<DriverLocationDiagnosticsSnapshot | null>(null);
 
   // Track previous active ride to detect completion
   const previousRideIdRef = useRef<string | null>(null);
@@ -382,6 +390,26 @@ export default function HomeScreen() {
     );
   }, []);
 
+  const syncHeartbeatFromDiagnostics = useCallback(
+    (snapshot: DriverLocationDiagnosticsSnapshot | null) => {
+      if (!snapshot?.lastSuccessfulServerHeartbeatAt) return;
+      markLocationHeartbeatSuccess(snapshot.lastSuccessfulServerHeartbeatAt);
+    },
+    [markLocationHeartbeatSuccess]
+  );
+
+  const refreshLocationDiagnostics = useCallback(async () => {
+    try {
+      const snapshot = await getDriverLocationDiagnostics();
+      setLocationDiagnostics(snapshot);
+      syncHeartbeatFromDiagnostics(snapshot);
+      return snapshot;
+    } catch (error) {
+      console.warn("[HomeScreen] Failed to refresh driver diagnostics:", error);
+      return null;
+    }
+  }, [syncHeartbeatFromDiagnostics]);
+
   const getHeartbeatAgeMs = useCallback(() => {
     const updatedAt = lastSuccessfulLocationUpdateAtRef.current;
     if (!updatedAt) return Number.POSITIVE_INFINITY;
@@ -398,6 +426,20 @@ export default function HomeScreen() {
     setIsGpsFresh(fresh);
     return fresh;
   }, [canGoOnline, getHeartbeatAgeMs, isAvailable, isWalletNegative, userType]);
+
+  useEffect(() => {
+    if (userType !== "driver") {
+      setLocationDiagnostics(null);
+      return;
+    }
+
+    void refreshLocationDiagnostics();
+    const interval = setInterval(() => {
+      void refreshLocationDiagnostics();
+    }, DRIVER_LOCATION_DIAGNOSTICS_REFRESH_INTERVAL_MS);
+
+    return () => clearInterval(interval);
+  }, [refreshLocationDiagnostics, userType]);
 
   // Refetch active services when screen mounts/user type changes.
   useEffect(() => {
@@ -437,6 +479,9 @@ export default function HomeScreen() {
       try {
         const status = await getDriverServiceStatus();
         if (!cancelled && !status.isRunning) {
+          await recordDriverServiceExpectedRunningButStopped(
+            "active_service_requires_android_tracking"
+          );
           await startDriverService();
         }
       } catch (error) {
@@ -467,6 +512,11 @@ export default function HomeScreen() {
 
         const mustRun = hasDriverActiveService || isAvailable;
         if (mustRun && !status.isRunning) {
+          await recordDriverServiceExpectedRunningButStopped(
+            hasDriverActiveService
+              ? "policy_enforcement_active_service"
+              : "policy_enforcement_available_driver"
+          );
           await startDriverService();
         } else if (!mustRun && status.isRunning) {
           await stopDriverService();
@@ -500,6 +550,11 @@ export default function HomeScreen() {
           const status = await getDriverServiceStatus();
           const mustRun = hasDriverActiveService || isAvailable;
           if (mustRun && !status.isRunning) {
+            await recordDriverServiceExpectedRunningButStopped(
+              hasDriverActiveService
+                ? "foreground_resume_active_service"
+                : "foreground_resume_available_driver"
+            );
             await startDriverService();
           } else if (!mustRun && status.isRunning) {
             await stopDriverService();
@@ -635,81 +690,108 @@ export default function HomeScreen() {
     toast,
   ]);
 
-  const fetchDriverStatus = useCallback(async () => {
-    // Guard: Only drivers should call this function
-    if (userType !== "driver") {
-      console.warn(
-        "[HomeScreen] fetchDriverStatus called for non-driver user, skipping"
-      );
-      return;
-    }
+  const fetchDriverStatus = useCallback(
+    async (options?: { showSpinner?: boolean }) => {
+      const showSpinner = options?.showSpinner ?? false;
+      // Guard: Only drivers should call this function
+      if (userType !== "driver") {
+        console.warn(
+          "[HomeScreen] fetchDriverStatus called for non-driver user, skipping"
+        );
+        return;
+      }
 
-    try {
-      setIsLoadingAvailability(true);
-      const response = await getDriverLocation();
-      if (response.success && response.data) {
-        const normalizedWalletBalance = Number(response.data.walletBalance ?? 0);
-        const walletBalanceResponse = await getWalletBalance();
-        const walletBalanceFromWalletApi =
-          walletBalanceResponse.success && walletBalanceResponse.data
-            ? Number(walletBalanceResponse.data.balance ?? normalizedWalletBalance)
-            : normalizedWalletBalance;
-        const walletIsNegative = walletBalanceFromWalletApi < 0;
-        const walletEligible = !walletIsNegative;
-
-        setWalletBalance(walletBalanceFromWalletApi);
-        setIsWalletNegative(walletIsNegative);
-        setCanGoOnline(walletEligible);
-        setIsAvailable(response.data.isAvailable && walletEligible);
-        setVerificationStatus(response.data.verificationStatus ?? null);
-        if (response.data.location?.updatedAt) {
-          markLocationHeartbeatSuccess(response.data.location.updatedAt);
-        } else if (response.data.isAvailable && walletEligible) {
-          setIsGpsFresh(false);
-        } else {
-          setIsGpsFresh(true);
+      try {
+        if (showSpinner) {
+          setIsLoadingAvailability(true);
         }
+        const response = await getDriverLocation();
+        if (response.success && response.data) {
+          const normalizedWalletBalance = Number(response.data.walletBalance ?? 0);
+          const walletBalanceResponse = await getWalletBalance();
+          const walletBalanceFromWalletApi =
+            walletBalanceResponse.success && walletBalanceResponse.data
+              ? Number(
+                  walletBalanceResponse.data.balance ?? normalizedWalletBalance
+                )
+              : normalizedWalletBalance;
+          const walletIsNegative = walletBalanceFromWalletApi < 0;
+          const walletEligible = !walletIsNegative;
 
-        // Sync foreground service state with availability
-        // If driver is available, ensure service is running
-        // If driver is unavailable, ensure service is stopped
-        const serviceStatus = await getDriverServiceStatus();
-        if (response.data.isAvailable && walletEligible && !serviceStatus.isRunning) {
-          // Service should be running but isn't - try to start it
-          const started = await startDriverService();
-          if (!started) {
-            console.warn(
-              "[HomeScreen] Driver is online but background tracking is not running."
-            );
+          setWalletBalance(walletBalanceFromWalletApi);
+          setIsWalletNegative(walletIsNegative);
+          setCanGoOnline(walletEligible);
+          setIsAvailable(response.data.isAvailable && walletEligible);
+          setVerificationStatus(response.data.verificationStatus ?? null);
+          if (!locationDiagnostics?.lastSuccessfulServerHeartbeatAt) {
+            setIsGpsFresh(!(response.data.isAvailable && walletEligible));
+          } else if (response.data.isAvailable && walletEligible) {
+            refreshGpsFreshness();
           }
-        } else if (
-          (!response.data.isAvailable || !walletEligible) &&
-          serviceStatus.isRunning &&
-          !activeServices.loading &&
-          !hasDriverActiveService
-        ) {
-          // Service is running but driver is unavailable - stop it
-          await stopDriverService();
+          if (
+            !response.data.location?.updatedAt &&
+            response.data.isAvailable &&
+            walletEligible
+          ) {
+            setIsGpsFresh(false);
+          } else if (!response.data.isAvailable || !walletEligible) {
+            setIsGpsFresh(true);
+          }
+
+          // Sync foreground service state with availability
+          // If driver is available, ensure service is running
+          // If driver is unavailable, ensure service is stopped
+          const serviceStatus = await getDriverServiceStatus();
+          if (
+            response.data.isAvailable &&
+            walletEligible &&
+            !serviceStatus.isRunning
+          ) {
+            await recordDriverServiceExpectedRunningButStopped(
+              "driver_available_but_android_tracking_not_running"
+            );
+            // Service should be running but isn't - try to start it
+            const started = await startDriverService();
+            if (!started) {
+              console.warn(
+                "[HomeScreen] Driver is online but background tracking is not running."
+              );
+            }
+          } else if (
+            (!response.data.isAvailable || !walletEligible) &&
+            serviceStatus.isRunning &&
+            !activeServices.loading &&
+            !hasDriverActiveService
+          ) {
+            // Service is running but driver is unavailable - stop it
+            await stopDriverService();
+          }
+        }
+        await refreshLocationDiagnostics();
+      } catch (error) {
+        console.error("Error fetching driver status:", error);
+      } finally {
+        if (showSpinner) {
+          setIsLoadingAvailability(false);
         }
       }
-    } catch (error) {
-      console.error("Error fetching driver status:", error);
-    } finally {
-      setIsLoadingAvailability(false);
-    }
-  }, [
-    activeServices.loading,
-    hasDriverActiveService,
-    markLocationHeartbeatSuccess,
-    userType,
-  ]);
+    },
+    [
+      activeServices.loading,
+      hasDriverActiveService,
+      locationDiagnostics?.lastSuccessfulServerHeartbeatAt,
+      refreshGpsFreshness,
+      refreshLocationDiagnostics,
+      userType,
+    ]
+  );
 
   // Fetch driver availability status on mount (for drivers only)
   // Also ensure background service is stopped for passengers
   useEffect(() => {
     // Only fetch driver status if explicitly a driver (not null/undefined)
     if (userType === "driver") {
-      fetchDriverStatus();
+      fetchDriverStatus({ showSpinner: true });
     }
     // Reset availability state and stop any running driver service if user is a passenger
     if (userType === "passenger") {
@@ -896,7 +978,6 @@ export default function HomeScreen() {
     }
   };
 
-  const isDriver = userType === "driver";
   const isPassenger = userType === "passenger";
   const isDriverApproved = verificationStatus === "approved";
   const isWalletRestricted = isWalletNegative || !canGoOnline;

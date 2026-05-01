@@ -48,6 +48,7 @@ import {
   subscribeToPendingIncomingRideId,
 } from "@/lib/incoming-ride-request";
 import { stopNativeIncomingAlertSound } from "@/lib/incoming-request-sound";
+import { recordKeepAwakeDiagnostic } from "@/lib/services/driver-location-diagnostics";
 import { subscribeToRideStatus, unsubscribeChannel } from "@/lib/supabase";
 
 const COUNTDOWN_SECONDS = 18;
@@ -932,11 +933,16 @@ export default function RideIncomingScreen() {
 
       soundRef.current = sound;
       ringtonePlayingRef.current = true;
-    } catch {
-      // ringtone is optional
-    } finally {
-      ringtoneStartingRef.current = false;
-    }
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Failed to start incoming ride ringtone.";
+        if (message.toLowerCase().includes("keep awake")) {
+          await recordKeepAwakeDiagnostic("ride-incoming:ensureRingtonePlaying", message);
+        }
+        console.warn("[RideIncoming] Failed to start ringtone:", message);
+      } finally {
+        ringtoneStartingRef.current = false;
+      }
   }, []);
 
   useEffect(() => {
